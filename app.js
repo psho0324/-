@@ -1,7 +1,8 @@
 const grid = document.querySelector('#project-grid');
 const dialog = document.querySelector('#project-dialog');
 const filters = [...document.querySelectorAll('[data-filter]')];
-const projects = window.projects;
+const allProjects = window.projects;
+const projects = allProjects.filter(project => project.showInProjects !== false);
 const calendarArt = `<div class="calendar-art" aria-hidden="true"><div class="art-top"><span>일상을 정리하는 작은 여유</span><span>↗</span></div><div class="calendar"><div class="calendar-head"><span>나의 한 주</span><span>‹ &nbsp; ›</span></div><div class="week"><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span><span>일</span></div><div class="days"><span>12</span><span>13</span><span class="today">14</span><span>15</span><span>16</span><span>17</span><span>18</span></div><div class="schedule"><span class="event green">새로운 아이디어 정리</span><span class="event purple">나만의 집중 시간</span><span class="event orange">잠깐, 산책하기</span></div><div class="calendar-bottom">작은 계획으로 채우는, 더 좋은 하루 <span>✳</span></div></div><span class="art-caption">MAKE ROOM FOR YOUR DAY.</span></div>`;
 function render(filter = 'all') {
   grid.replaceChildren();
@@ -87,7 +88,7 @@ categoryTabs.forEach((tab, index) => {
 // 각 기록은 projectId로 프로젝트에 연결됩니다.
 const journalFilterGroup = document.querySelector('#journal-filters');
 const journalList = document.querySelector('#journal-list');
-for (const item of [{ id: 'all', name: '전체' }, ...projects]) {
+for (const item of [{ id: 'all', name: '전체' }, ...allProjects]) {
   const button = document.createElement('button');
   button.type = 'button';
   button.dataset.journalFilter = item.id;
@@ -110,7 +111,7 @@ function renderJournal(projectId = 'all') {
   journalList.replaceChildren();
   journalList.hidden = entries.length === 0;
   document.querySelector('#journal-empty').hidden = entries.length > 0;
-  const name = projects.find(project => project.id === projectId)?.name || '전체 프로젝트';
+  const name = allProjects.find(project => project.id === projectId)?.name || '전체 프로젝트';
   document.querySelector('#journal-empty-title').textContent = name + '의 첫 이야기를 기다리는 중';
   document.querySelector('#journal-result').textContent = name + ' · ' + entries.length + '개의 기록';
   for (const entry of entries) {
@@ -120,7 +121,7 @@ function renderJournal(projectId = 'all') {
     const time = article.querySelector('time');
     time.dateTime = entry.date;
     time.textContent = entry.date.replaceAll('-', '.');
-    article.querySelector('.entry-label').textContent = projects.find(project => project.id === entry.projectId)?.name || '프로젝트';
+    article.querySelector('.entry-label').textContent = allProjects.find(project => project.id === entry.projectId)?.name || '프로젝트';
     article.querySelector('h3').textContent = entry.title;
     article.querySelector('.entry-summary').textContent = entry.summary;
     article.querySelector('.entry-body').textContent = entry.body;
