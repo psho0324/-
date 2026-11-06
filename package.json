@@ -1,0 +1,15 @@
+{
+  "name": "wanderer-workspace",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node tests/database.test.cjs && node tests/workspace.test.cjs && node tests/browser.test.cjs && node tests/build.test.cjs",
+    "build": "python3 scripts/version-assets.py && node scripts/build.cjs",
+    "start": "python3 -m http.server 3000 --bind 0.0.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "playwright": "1.58.2",
+    "prettier": "3.6.2"
+  }
+}

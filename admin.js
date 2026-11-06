@@ -1,228 +1,832 @@
 (() => {
-  const api = window.WorkspaceBackend;
-  const $ = selector => document.querySelector(selector);
-  let projects = [], entries = [], canEdit = false, editing = null, pendingDelete = null, busy = false;
-  const categories = window.PROJECT_CATEGORIES;
-  const categoryLabel = value => categories.find(category => category.value === value)?.label || value || '기타';
-  const editor = $('#editor'), form = $('#editor-form');
-  function message(text, error = false) {
-    $('#notice').textContent = text; $('#notice').hidden = !text; $('#notice').classList.toggle('error', error);
+  const api = window.WorkspaceBackend,
+    $ = (s) => document.querySelector(s),
+    categories = window.PROJECT_CATEGORIES;
+  const names = { project: '프로젝트', entry: '제작 기록', idea: '다음 실험' };
+  let items = [],
+    user = null,
+    editing = null,
+    baseline = '',
+    busy = false,
+    uploading = false,
+    images = [],
+    pendingAction = null,
+    lastSave = null,
+    historyState = null,
+    restoreFile = null,
+    restoreId = null;
+  const editor = $('#editor'),
+    form = $('#editor-form');
+  const dataOf = (item) => item.draft || item.published || {};
+  const titleOf = (item) => dataOf(item).name || dataOf(item).title || '(제목 없음)';
+  const text = (tag, value, className) => {
+    const el = document.createElement(tag);
+    el.textContent = value || '';
+    if (className) el.className = className;
+    return el;
+  };
+  function message(value, error = false) {
+    $('#notice').textContent = value;
+    $('#notice').hidden = !value;
+    $('#notice').classList.toggle('error', error);
   }
-  function errorText(error) {
-    return error.name === 'TimeoutError' || error.name === 'TypeError' ? '저장 서비스에 연결하지 못했습니다. 인터넷 연결과 Supabase 설정을 확인하고 다시 시도해 주세요.' : error.message;
-  }
-  function publishBadge(item) {
-    const badge = document.createElement('span');
-    badge.className = 'badge' + (item.isPublished === false ? ' draft' : '');
-    badge.textContent = item.isPublished === false ? '초안' : '공개'; return badge;
-  }
-  function render() {
-    $('#stat-projects').textContent = projects.length;
-    $('#stat-entries').textContent = entries.length;
-    $('#stat-drafts').textContent = [...projects, ...entries].filter(item => item.isPublished === false).length;
-    const selectedProject = $('#entry-project-filter').value;
-    $('#entry-project-filter').replaceChildren(new Option('전체 프로젝트', 'all'), ...projects.map(project => new Option(project.name, project.id)));
-    if (projects.some(project => project.id === selectedProject)) $('#entry-project-filter').value = selectedProject;
-    const draftItems = [
-      ...projects.filter(item => item.isPublished === false).map(item => ({ type: 'project', item })),
-      ...entries.filter(item => item.isPublished === false).map(item => ({ type: 'entry', item }))
-    ];
-    $('#draft-tab-count').textContent = draftItems.length;
-    function renderItems(container, items, emptyText) {
-      container.replaceChildren();
-      if (!items.length) {
-        const empty = document.createElement('p'); empty.className = 'empty-list'; empty.textContent = emptyText; container.append(empty);
-      }
-      for (const { type, item } of items) {
-        const article = document.createElement('article'); article.className = 'admin-item';
-        article.innerHTML = '<div class="item-copy"><h3></h3><p></p><div class="item-meta"></div></div><div class="row-actions"><button class="secondary edit">수정</button><button class="secondary delete">삭제</button></div>';
-        article.querySelector('h3').textContent = type === 'project' ? item.name : item.title;
-        article.querySelector('p').textContent = type === 'project' ? item.description : item.summary;
-        const meta = article.querySelector('.item-meta'); meta.append(publishBadge(item));
-        const detail = document.createElement('span');
-        detail.textContent = type === 'project' ? '프로젝트 · ' + categoryLabel(item.category) + ' · ' + (item.status === 'live' ? '사용 가능' : '개발 중') + (item.showInProjects === false ? ' · 기록에만 표시' : '') : '제작 기록 · ' + (projects.find(project => project.id === item.projectId)?.name || '프로젝트') + ' · ' + item.date;
-        meta.append(detail);
-        if (type === 'entry' && projects.find(project => project.id === item.projectId)?.isPublished === false) {
-          const hidden = document.createElement('span'); hidden.textContent = '프로젝트가 초안이라 방문자에게 숨겨짐'; meta.append(hidden);
-        }
-        article.querySelector('.edit').addEventListener('click', () => openEditor(type, item));
-        article.querySelector('.delete').addEventListener('click', () => confirmDelete(type, item));
-        article.querySelectorAll('button').forEach(button => { button.disabled = !canEdit; });
-        container.append(article);
-      }
-    }
-    renderItems($('#project-list'), projects.map(item => ({ type: 'project', item })), '아직 프로젝트가 없어요. 첫 프로젝트를 추가해 보세요.');
-    renderItems($('#entry-list'), entries.filter(entry => $('#entry-project-filter').value === 'all' || entry.projectId === $('#entry-project-filter').value).map(item => ({ type: 'entry', item })), '아직 제작 기록이 없어요. 첫 이야기를 남겨 보세요.');
-    renderItems($('#draft-list'), draftItems, '보관 중인 초안이 없어요. 프로젝트 초안이나 기록 초안으로 새로운 이야기를 시작해 보세요.');
-    $('#new-project').disabled = $('#new-draft-project').disabled = !canEdit;
-    $('#new-entry').disabled = $('#new-draft-entry').disabled = !canEdit || !projects.length;
+  function errorText(e) {
+    return e.name === 'TypeError' || e.name === 'TimeoutError'
+      ? '연결이 불안정합니다. 작성 내용은 이 브라우저에 보관했습니다. 다시 시도해 주세요.'
+      : e.message;
   }
   function activateTab(tab) {
-    for (const item of document.querySelectorAll('[role="tab"]')) {
-      const selected = item === tab; item.setAttribute('aria-selected', String(selected)); item.tabIndex = selected ? 0 : -1;
-      document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
-    }
-  }
-  const tabs = [...document.querySelectorAll('[role="tab"]')];
-  tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => activateTab(tab));
-    tab.addEventListener('keydown', event => {
-      const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
-      if (next === null) return; event.preventDefault(); activateTab(tabs[next]); tabs[next].focus();
+    document.querySelectorAll('[role=tab]').forEach((t) => {
+      const selected = t === tab;
+      t.setAttribute('aria-selected', selected);
+      t.tabIndex = selected ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !selected;
     });
-  });
-  function setValue(id, value = '') { $('#' + id).value = value; }
-  function updateSaveLabel() {
-    $('#save-item').textContent = $('#publish-state').value === 'draft' ? '초안 저장' : '공개 저장';
   }
-  function updateDescriptionCount() { $('#description-count').textContent = $('#project-description').value.length + ' / 500'; }
-  $('#publish-state').addEventListener('change', updateSaveLabel);
-  $('#project-description').addEventListener('input', updateDescriptionCount);
-  function openEditor(type, item = null) {
-    if (!canEdit) return;
-    editing = { type, item }; form.reset(); $('#editor-error').hidden = true;
-    $('#editor-title').textContent = (type === 'project' ? '프로젝트 ' : '제작 기록 ') + (item ? '수정' : '추가');
-    $('#project-fields').hidden = type !== 'project'; $('#entry-fields').hidden = type !== 'entry';
-    $('#project-fields').querySelectorAll('input,select,textarea').forEach(input => { input.disabled = type !== 'project'; });
-    $('#entry-fields').querySelectorAll('input,select,textarea').forEach(input => { input.disabled = type !== 'entry'; });
-    setValue('publish-state', item?.isPublished ? 'published' : 'draft');
-    if (type === 'project') {
-      const category = item?.category ?? 'OTHER';
-      const categoryOptions = categories.map(option => new Option(option.label, option.value));
-      if (!categories.some(option => option.value === category)) categoryOptions.push(new Option('기존 분류: ' + (category || '미지정'), category));
-      $('#project-category').replaceChildren(...categoryOptions);
-      $('#project-advanced').open = false;
-      for (const [field, value] of Object.entries({ name: item?.name, id: item?.id || 'project-' + crypto.randomUUID(), category, status: item?.status || 'building', description: item?.description, note: item?.note, url: item?.url, image: item?.imageUrl, tags: item?.tags?.join(', '), order: item?.sortOrder || 0 })) setValue('project-' + field, value ?? '');
-      $('#project-id').disabled = Boolean(item); $('#project-visible').checked = item?.showInProjects !== false;
-    } else {
-      $('#entry-project').replaceChildren(...projects.map(project => new Option(project.name, project.id)));
-      const filter = $('#entry-project-filter').value;
-      setValue('entry-project', item?.projectId || (filter !== 'all' ? filter : projects[0]?.id));
-      const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
-      for (const field of ['date', 'title', 'summary', 'body']) setValue('entry-' + field, item?.[field] || (field === 'date' ? today : ''));
+  const tabs = [...document.querySelectorAll('[role=tab]')];
+  tabs.forEach((tab, i) => {
+    tab.onclick = () => activateTab(tab);
+    tab.onkeydown = (e) => {
+      const n =
+        e.key === 'ArrowRight'
+          ? (i + 1) % tabs.length
+          : e.key === 'ArrowLeft'
+            ? (i + tabs.length - 1) % tabs.length
+            : e.key === 'Home'
+              ? 0
+              : e.key === 'End'
+                ? tabs.length - 1
+                : null;
+      if (n === null) return;
+      e.preventDefault();
+      activateTab(tabs[n]);
+      tabs[n].focus();
+    };
+  });
+  function localKey() {
+    return 'wanderer-editor-v2:' + user?.id;
+  }
+  function snapshot() {
+    return Object.fromEntries(
+      [...form.querySelectorAll('input[id],select[id],textarea[id]')]
+        .filter((el) => el.type !== 'file')
+        .map((el) => [el.id, el.type === 'checkbox' ? el.checked : el.value])
+    );
+  }
+  function dirty() {
+    return !!editing && JSON.stringify({ values: snapshot(), images }) !== baseline;
+  }
+  function saveLocal() {
+    if (!user || !editing || !dirty()) return;
+    try {
+      localStorage.setItem(
+        localKey(),
+        JSON.stringify({ editing, values: snapshot(), images, lastSave, savedAt: Date.now() })
+      );
+      $('#local-save-status').textContent = '작성 중인 내용을 이 브라우저에 임시 보관했습니다.';
+    } catch {
+      $('#local-save-status').textContent =
+        '이 브라우저에 임시 보관하지 못했습니다. 창을 닫기 전에 저장해 주세요.';
     }
-    updateDescriptionCount(); updateSaveLabel();
+  }
+  function resumeBanner() {
+    let exists = false;
+    try {
+      exists = !!user && !!localStorage.getItem(localKey());
+    } catch {}
+    $('#resume-banner').hidden = !exists;
+  }
+  function clearLocal() {
+    try {
+      localStorage.removeItem(localKey());
+    } catch {}
+    resumeBanner();
+  }
+  function requestClose() {
+    if (busy || uploading) return;
+    if (dirty() && !confirm('저장하지 않은 내용이 있습니다. 이 브라우저에 임시 보관하고 닫을까요?'))
+      return;
+    saveLocal();
+    editor.close();
+    resumeBanner();
+  }
+  form.addEventListener('input', () => {
+    lastSave = null;
+    updateCount();
+    saveLocal();
+  });
+  form.addEventListener('change', () => {
+    lastSave = null;
+    updateCount();
+    saveLocal();
+  });
+  window.addEventListener('beforeunload', (e) => {
+    if (editor.open && dirty()) {
+      saveLocal();
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+  editor.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    requestClose();
+  });
+  editor.querySelectorAll('.close-editor').forEach((button) => (button.onclick = requestClose));
+  function updateCount() {
+    $('#description-count').textContent = $('#project-description').value.length + ' / 500';
+    $('#save-item').textContent =
+      $('#publish-state').value === 'draft' ? '수정 초안 저장' : '공개 저장';
+  }
+  function renderAttachments() {
+    const container = $('#entry-images');
+    container.replaceChildren();
+    images.forEach((value, i) => {
+      const row = text('div', '', 'attachment');
+      row.append(text('span', '첨부 이미지 ' + (i + 1)));
+      const remove = text('button', '첨부 취소', 'text-button');
+      remove.type = 'button';
+      remove.onclick = () => {
+        images.splice(i, 1);
+        renderAttachments();
+        lastSave = null;
+        saveLocal();
+      };
+      row.append(remove);
+      container.append(row);
+    });
+  }
+  function fill(kind, item, values) {
+    editing = {
+      kind,
+      id: item?.id || kind + '-' + crypto.randomUUID(),
+      revision: item?.revision || 0
+    };
+    images = [...(values.images || [])];
+    form.reset();
+    lastSave = null;
+    $('#editor-error').hidden = true;
+    $('#copy-conflict').hidden = true;
+    $('#local-save-status').textContent = '';
+    $('#upload-status').textContent = '';
+    $('#editor-title').textContent = names[kind] + ' ' + (item ? '수정' : '추가');
+    for (const k of ['project', 'entry', 'idea']) {
+      const group = $('#' + k + '-fields');
+      group.hidden = k !== kind;
+      group.querySelectorAll('input,textarea,select').forEach((el) => (el.disabled = k !== kind));
+    }
+    $('#project-category').replaceChildren(...categories.map((c) => new Option(c.label, c.value)));
+    if (values.category !== undefined && !categories.some((c) => c.value === values.category))
+      $('#project-category').append(new Option('기존 분류: ' + values.category, values.category));
+    const projects = items.filter((i) => i.kind === 'project' && !i.deleted_at);
+    $('#entry-project').replaceChildren(...projects.map((p) => new Option(titleOf(p), p.id)));
+    const set = (id, value) => {
+      $('#' + id).value = value ?? '';
+    };
+    const fields =
+      kind === 'project'
+        ? {
+            name: values.name,
+            id: editing.id,
+            category: values.category || 'OTHER',
+            status: values.status || 'building',
+            description: values.description,
+            note: values.note,
+            url: values.url,
+            image: values.imageUrl,
+            tags: (values.tags || []).join(', '),
+            order: values.sortOrder || 0
+          }
+        : kind === 'entry'
+          ? {
+              project:
+                values.projectId ||
+                projects.find((p) => dataOf(p).showInProjects !== false)?.id ||
+                projects[0]?.id,
+              date:
+                values.date ||
+                new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date()),
+              title: values.title,
+              summary: values.summary,
+              body: values.body
+            }
+          : { title: values.title, summary: values.summary, stage: values.stage || 'idea' };
+    Object.entries(fields).forEach(([key, value]) => set(kind + '-' + key, value));
+    $('#project-visible').checked = values.showInProjects !== false;
+    $('#project-id').disabled = !!item || kind !== 'project';
+    $('#project-advanced').open = false;
+    $('#publish-state').value = item?.published && !item?.draft ? 'published' : 'draft';
+    renderAttachments();
+    updateCount();
+    baseline = JSON.stringify({ values: snapshot(), images });
+  }
+  function openEditor(kind, item = null) {
+    if (!user) return;
+    let stored = false;
+    try {
+      stored = !!localStorage.getItem(localKey());
+    } catch {}
+    if (
+      stored &&
+      !confirm(
+        '임시 보관한 작성 내용이 있습니다. 새 편집을 시작하면 임시 내용이 바뀔 수 있습니다. 계속할까요?'
+      )
+    )
+      return;
+    fill(kind, item, item ? dataOf(item) : {});
     editor.showModal();
   }
-  function validUrl(value) { if (!value) return true; try { return new URL(value).protocol === 'https:'; } catch { return false; } }
-  form.addEventListener('submit', async event => {
-    event.preventDefault(); if (!canEdit || busy || !form.reportValidity()) return;
-    $('#editor-error').hidden = true;
-    const val = id => $('#' + id).value.trim();
-    let payload;
+  $('#resume-editor').onclick = () => {
     try {
-      if (editing.type === 'project') {
-        if (!validUrl(val('project-url')) || !validUrl(val('project-image'))) throw new Error('앱과 이미지 주소는 https://로 시작하는 주소를 입력해 주세요.');
-        const tags = val('project-tags').split(',').map(tag => tag.trim()).filter(Boolean);
-        if (tags.length > 10 || tags.some(tag => tag.length > 50)) throw new Error('태그는 10개 이하, 각 50자 이하로 적어 주세요.');
-        if (!val('project-name') || !val('project-description')) throw new Error('이름과 소개를 입력해 주세요.');
-        payload = { id: editing.item?.id || val('project-id'), name: val('project-name'), category: val('project-category'), description: val('project-description'), status: val('project-status'), note: val('project-note'), url: val('project-url'), imageUrl: val('project-image'), tags, sortOrder: Number(val('project-order')), showInProjects: $('#project-visible').checked, isPublished: val('publish-state') === 'published' };
-      } else {
-        if (!val('entry-title') || !val('entry-summary') || !val('entry-body')) throw new Error('제목, 요약과 내용을 입력해 주세요.');
-        payload = { id: editing.item?.id, projectId: val('entry-project'), date: val('entry-date'), title: val('entry-title'), summary: val('entry-summary'), body: val('entry-body'), isPublished: val('publish-state') === 'published' };
+      const stored = JSON.parse(localStorage.getItem(localKey()));
+      if (!stored) return;
+      const match = items.find((i) => i.kind === stored.editing.kind && i.id === stored.editing.id);
+      fill(stored.editing.kind, match, match ? dataOf(match) : {});
+      editing = stored.editing;
+      Object.entries(stored.values).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el) {
+          if (el.type === 'checkbox') el.checked = value;
+          else el.value = value;
+        }
+      });
+      images = stored.images || [];
+      lastSave = stored.lastSave;
+      renderAttachments();
+      updateCount();
+      editor.showModal();
+    } catch {
+      message('임시 내용을 읽지 못했습니다. 임시 내용 지우기 후 다시 작성해 주세요.', true);
+    }
+  };
+  $('#discard-local').onclick = () => {
+    if (confirm('이 브라우저에 임시 보관된 작성 내용을 지울까요?')) clearLocal();
+  };
+  function readPayload() {
+    const val = (id) => $('#' + id).value.trim();
+    const kind = editing.kind;
+    let data;
+    if (kind === 'project') {
+      const id = editing.revision ? editing.id : val('project-id');
+      if (!/^[a-z0-9](?:[a-z0-9]|-){0,59}$/.test(id))
+        throw Error('관리용 ID는 영문 소문자·숫자·하이픈으로 60자 이하로 입력해 주세요.');
+      editing.id = id;
+      const tags = val('project-tags')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (tags.length > 10 || tags.some((t) => t.length > 50))
+        throw Error('태그는 최대 10개, 각 50자 이하로 적어 주세요.');
+      if (val('project-url') && !/^https:\/\//.test(val('project-url')))
+        throw Error('앱 주소는 https://로 시작해야 합니다.');
+      const image = val('project-image');
+      if (image && !image.startsWith('storage:') && !/^https:\/\//.test(image))
+        throw Error('이미지 주소는 https://를 사용하거나 파일을 업로드해 주세요.');
+      data = {
+        name: val('project-name'),
+        category: val('project-category'),
+        description: val('project-description'),
+        status: val('project-status'),
+        tags,
+        note: val('project-note'),
+        url: val('project-url'),
+        imageUrl: image,
+        sortOrder: Number(val('project-order')),
+        showInProjects: $('#project-visible').checked
+      };
+    } else if (kind === 'entry')
+      data = {
+        projectId: val('entry-project'),
+        date: val('entry-date'),
+        title: val('entry-title'),
+        summary: val('entry-summary'),
+        body: val('entry-body'),
+        images: [...images]
+      };
+    else
+      data = { title: val('idea-title'), summary: val('idea-summary'), stage: val('idea-stage') };
+    return {
+      kind,
+      id: editing.id,
+      revision: editing.revision,
+      data,
+      publish: $('#publish-state').value === 'published'
+    };
+  }
+  function replaceItem(item) {
+    const index = items.findIndex((i) => i.kind === item.kind && i.id === item.id);
+    if (index < 0) items.push(item);
+    else items[index] = item;
+    render();
+  }
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (busy || uploading || !form.reportValidity()) return;
+    $('#editor-error').hidden = true;
+    try {
+      const payload = readPayload();
+      const fingerprint = JSON.stringify(payload);
+      if (!lastSave || lastSave.fingerprint !== fingerprint)
+        lastSave = { fingerprint, requestId: crypto.randomUUID() };
+      saveLocal();
+      busy = true;
+      form.inert = true;
+      $('#save-item').textContent = '저장 중…';
+      const item = await api.saveItem({ ...payload, requestId: lastSave.requestId });
+      replaceItem(item);
+      clearLocal();
+      editing = null;
+      editor.close();
+      message(
+        payload.publish
+          ? '공개본에 반영했습니다.'
+          : '수정 초안을 저장했습니다. 기존 공개본은 유지됩니다.'
+      );
+    } catch (error) {
+      $('#editor-error').textContent = errorText(error);
+      $('#editor-error').hidden = false;
+      $('#copy-conflict').hidden = error.code !== 'PT409';
+      if (error.code === 'PT409') {
+        try {
+          items = await api.adminItems();
+          render();
+        } catch {}
       }
-      busy = true; $('#save-item').disabled = true; $('#save-item').textContent = '저장 중…'; editor.querySelectorAll('.close-editor').forEach(button => { button.disabled = true; });
-      const saved = await (editing.type === 'project' ? api.saveProject(payload, !editing.item) : api.saveEntry(payload, !editing.item));
-      const list = editing.type === 'project' ? projects : entries;
-      const index = list.findIndex(item => item.id === saved.id);
-      if (index === -1) list.push(saved); else list[index] = saved;
-      projects.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id.localeCompare(b.id));
-      entries.sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id));
-      render(); editor.close(); message(saved.isPublished ? (window.WORKSPACE_CONFIG.useDatabase ? '저장했습니다. 공개 사이트에 반영됩니다.' : '저장했습니다. 공개 사이트 연결 확인이 끝나면 반영됩니다.') : '초안으로 저장했습니다. 방문자에게는 보이지 않습니다.');
-    } catch (error) { $('#editor-error').textContent = errorText(error); $('#editor-error').hidden = false; }
-    finally { busy = false; $('#save-item').disabled = false; updateSaveLabel(); editor.querySelectorAll('.close-editor').forEach(button => { button.disabled = false; }); }
-  });
-  editor.querySelectorAll('.close-editor').forEach(button => button.addEventListener('click', () => { if (!busy) editor.close(); }));
-  editor.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
-  function confirmDelete(type, item) {
-    if (!canEdit || busy) return;
-    if (type === 'project' && entries.some(entry => entry.projectId === item.id)) { message('이 프로젝트에 제작 기록이 연결되어 있습니다. 기록을 먼저 다른 프로젝트로 옮기거나 삭제해 주세요. 공개만 멈추려면 프로젝트를 초안으로 바꿀 수 있어요.', true); return; }
-    pendingDelete = { type, item }; $('#delete-error').hidden = true;
-    $('#delete-message').textContent = '“' + (type === 'project' ? item.name : item.title) + '” 항목을 삭제합니다.';
+      saveLocal();
+    } finally {
+      busy = false;
+      form.inert = false;
+      updateCount();
+    }
+  };
+  $('#copy-conflict').onclick = () => {
+    editing.id = editing.kind + '-' + crypto.randomUUID();
+    editing.revision = 0;
+    $('#project-id').value = editing.id;
+    $('#project-id').disabled = editing.kind !== 'project';
+    $('#publish-state').value = 'draft';
+    lastSave = null;
+    $('#copy-conflict').hidden = true;
+    $('#editor-error').hidden = true;
+    updateCount();
+    saveLocal();
+  };
+  $('#project-upload').onchange = async (e) => {
+    if (!e.target.files[0]) return;
+    uploading = true;
+    $('#save-item').disabled = true;
+    $('#upload-status').textContent = '이미지 업로드 중…';
+    try {
+      $('#project-image').value = await api.uploadImage(e.target.files[0]);
+      lastSave = null;
+      saveLocal();
+      $('#upload-status').textContent = '대표 이미지를 첨부했습니다. 저장 후 적용됩니다.';
+    } catch (error) {
+      $('#upload-status').textContent = errorText(error);
+    } finally {
+      uploading = false;
+      $('#save-item').disabled = false;
+      e.target.value = '';
+    }
+  };
+  $('#entry-upload').onchange = async (e) => {
+    const files = [...e.target.files];
+    if (images.length + files.length > 10) {
+      message('첨부 이미지는 최대 10장입니다.', true);
+      e.target.value = '';
+      return;
+    }
+    uploading = true;
+    $('#save-item').disabled = true;
+    try {
+      for (const file of files) {
+        $('#upload-status').textContent = '이미지 업로드 중…';
+        images.push(await api.uploadImage(file));
+        renderAttachments();
+        saveLocal();
+      }
+      $('#upload-status').textContent = '이미지를 첨부했습니다. 저장 후 적용됩니다.';
+    } catch (error) {
+      $('#upload-status').textContent = errorText(error);
+    } finally {
+      uploading = false;
+      $('#save-item').disabled = false;
+      e.target.value = '';
+    }
+  };
+  $('#preview-item').onclick = async () => {
+    if (!form.reportValidity()) return;
+    try {
+      const { kind, data } = readPayload();
+      $('#preview-title').textContent = data.name || data.title;
+      const container = $('#preview-content');
+      container.replaceChildren(
+        text('p', data.description || data.summary),
+        text('p', data.note || data.body || '')
+      );
+      for (const value of [data.imageUrl, ...(data.images || [])].filter(Boolean)) {
+        const image = new Image();
+        image.alt = '미리보기 이미지';
+        image.src = await api.resolveImage(value, true);
+        container.append(image);
+      }
+      $('#preview-dialog').showModal();
+    } catch (error) {
+      message(errorText(error), true);
+    }
+  };
+  $('#close-preview').onclick = () => $('#preview-dialog').close();
+  const pageNumbers = {};
+  function render() {
+    const active = items.filter((i) => !i.deleted_at),
+      projects = active.filter((i) => i.kind === 'project'),
+      entries = active.filter((i) => i.kind === 'entry'),
+      drafts = active.filter((i) => i.draft);
+    $('#stat-projects').textContent = projects.length;
+    $('#stat-entries').textContent = entries.length;
+    $('#stat-drafts').textContent = drafts.length;
+    $('#draft-tab-count').textContent = drafts.length;
+    const filter = $('#entry-project-filter').value;
+    $('#entry-project-filter').replaceChildren(
+      new Option('전체 프로젝트', ''),
+      ...projects.map((i) => new Option(titleOf(i), i.id))
+    );
+    $('#entry-project-filter').value = projects.some((p) => p.id === filter) ? filter : '';
+    const collections = {
+      'project-list': projects,
+      'entry-list': entries.filter(
+        (e) =>
+          !$('#entry-project-filter').value ||
+          dataOf(e).projectId === $('#entry-project-filter').value
+      ),
+      'draft-list': drafts,
+      'idea-admin-list': active.filter((i) => i.kind === 'idea'),
+      'trash-list': items.filter((i) => i.deleted_at)
+    };
+    for (const [id, list] of Object.entries(collections)) {
+      const container = $('#' + id);
+      container.replaceChildren();
+      let page = pageNumbers[id] || 0;
+      page = Math.min(page, Math.max(0, Math.ceil(list.length / 20) - 1));
+      pageNumbers[id] = page;
+      if (!list.length)
+        container.append(
+          text(
+            'p',
+            id === 'trash-list' ? '휴지통이 비어 있습니다.' : '아직 등록된 항목이 없습니다.',
+            'empty-list'
+          )
+        );
+      for (const item of list.slice(page * 20, page * 20 + 20)) {
+        const data = dataOf(item),
+          article = text('article', '', 'admin-item'),
+          copy = text('div', '', 'item-copy');
+        copy.append(text('h3', titleOf(item)), text('p', data.description || data.summary || ''));
+        article.dataset.itemId = item.id;
+        article.dataset.kind = item.kind;
+        const badge = item.deleted_at
+          ? '휴지통'
+          : item.published
+            ? item.draft
+              ? '공개 중 · 수정 초안 있음'
+              : '공개 중'
+            : '초안';
+        copy.append(
+          text('span', names[item.kind] + ' · ' + badge + ' · 버전 ' + item.revision, 'badge')
+        );
+        const actions = text('div', '', 'row-actions');
+        function button(label, fn, cls) {
+          const b = text('button', label, 'secondary ' + (cls || ''));
+          b.onclick = fn;
+          actions.append(b);
+        }
+        if (item.deleted_at) button('복원', () => queueAction(item, 'restore'));
+        else {
+          button('수정', () => openEditor(item.kind, item), 'edit');
+          button('휴지통', () => queueAction(item, 'trash'), 'delete');
+          button('이력', () => showHistory(item), 'history');
+          if (item.published) button('공개 중지', () => queueAction(item, 'unpublish'));
+          if (item.published && item.draft)
+            button('수정 초안 취소', () => queueAction(item, 'discard-draft'));
+        }
+        article.append(copy, actions);
+        container.append(article);
+      }
+      if (list.length > 20) {
+        const pagination = text('div', '', 'pagination');
+        for (const [label, next] of [
+          ['이전', page - 1],
+          ['다음', page + 1]
+        ]) {
+          const b = text('button', label, 'secondary');
+          b.disabled = next < 0 || next >= Math.ceil(list.length / 20);
+          b.onclick = () => {
+            pageNumbers[id] = next;
+            render();
+          };
+          pagination.append(b);
+        }
+        pagination.append(text('span', page + 1 + ' / ' + Math.ceil(list.length / 20)));
+        container.append(pagination);
+      }
+    }
+    $('#new-entry').disabled = $('#new-draft-entry').disabled = !projects.length;
+    resumeBanner();
+  }
+  function queueAction(item, action, historyId = null) {
+    pendingAction = { item, action, historyId, requestId: crypto.randomUUID() };
+    $('#action-title').textContent = {
+      trash: '휴지통으로 이동할까요?',
+      restore: '초안으로 복원할까요?',
+      unpublish: '공개를 중지할까요?',
+      'discard-draft': '수정 초안을 취소할까요?',
+      history: '이 내용을 수정 초안으로 복원할까요?'
+    }[action];
+    $('#delete-message').textContent = '“' + titleOf(item) + '” 항목에 적용합니다.';
+    $('#delete-error').hidden = true;
     $('#delete-dialog').showModal();
   }
-  $('#cancel-delete').addEventListener('click', () => { if (!busy) $('#delete-dialog').close(); });
-  $('#delete-dialog').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
-  $('#confirm-delete').addEventListener('click', async () => {
-    if (!canEdit || busy || !pendingDelete) return;
-    busy = true; $('#confirm-delete').disabled = true; $('#cancel-delete').disabled = true;
-    try {
-      await api.remove(pendingDelete.type === 'project' ? 'projects' : 'journal_entries', pendingDelete.item.id);
-      if (pendingDelete.type === 'project') projects = projects.filter(item => item.id !== pendingDelete.item.id); else entries = entries.filter(item => item.id !== pendingDelete.item.id);
-      render(); $('#delete-dialog').close(); message('삭제했습니다.');
-    } catch (error) { $('#delete-error').textContent = errorText(error); $('#delete-error').hidden = false; }
-    finally { busy = false; $('#confirm-delete').disabled = false; $('#cancel-delete').disabled = false; }
+  $('#cancel-delete').onclick = () => {
+    if (!busy) $('#delete-dialog').close();
+  };
+  $('#delete-dialog').addEventListener('cancel', (e) => {
+    if (busy) e.preventDefault();
   });
-  $('#new-project').addEventListener('click', () => openEditor('project'));
-  $('#open-drafts').addEventListener('click', () => { activateTab($('#manage-drafts')); $('#manage-drafts').focus(); });
-  $('#new-draft-project').addEventListener('click', () => openEditor('project'));
-  $('#new-draft-entry').addEventListener('click', () => openEditor('entry'));
-  $('#new-entry').addEventListener('click', () => openEditor('entry'));
-  $('#entry-project-filter').addEventListener('change', render);
-  function showLogin() { $('#recovery-panel').hidden = true; canEdit = false; projects = []; entries = []; render(); $('#dashboard').hidden = true; $('#login-panel').hidden = false; $('#logout').hidden = true; }
-  async function loadDashboard() {
-    const user = await api.verifyAdmin();
-    if (!user) { showLogin(); return; }
-    const data = await api.load(true); projects = data.projects; entries = data.entries; canEdit = true;
-    $('#login-panel').hidden = true; $('#dashboard').hidden = false; $('#logout').hidden = false;
-    $('#account-label').textContent = user.email + ' · 관리자' + (window.WORKSPACE_CONFIG.useDatabase ? '' : ' · 공개 데이터 연결 대기'); render();
+  $('#confirm-delete').onclick = async () => {
+    if (busy) return;
+    busy = true;
+    $('#confirm-delete').disabled = true;
+    try {
+      replaceItem(
+        await api.itemAction(
+          pendingAction.item,
+          pendingAction.action,
+          pendingAction.requestId,
+          pendingAction.historyId
+        )
+      );
+      $('#delete-dialog').close();
+      if ($('#history-dialog').open) $('#history-dialog').close();
+      message('변경했습니다. 휴지통과 이력에서 이전 내용을 확인할 수 있습니다.');
+    } catch (error) {
+      $('#delete-error').textContent = errorText(error);
+      $('#delete-error').hidden = false;
+    } finally {
+      busy = false;
+      $('#confirm-delete').disabled = false;
+    }
+  };
+  async function showHistory(item) {
+    historyState = { item, offset: 0 };
+    $('#history-list').replaceChildren();
+    $('#history-dialog').showModal();
+    await appendHistory();
   }
-  $('#login-form').addEventListener('submit', async event => {
-    event.preventDefault(); const button = event.submitter; button.disabled = true; message('로그인 확인 중…');
-    try { await api.login($('#login-email').value.trim(), $('#login-password').value); $('#login-password').value = ''; await loadDashboard(); message(''); }
-    catch (error) { message(errorText(error), true); showLogin(); }
-    finally { button.disabled = false; }
+  async function appendHistory() {
+    try {
+      const rows = await api.history(historyState.item, historyState.offset);
+      for (const row of rows) {
+        const container = text('article', '', 'history-row');
+        const previous = row.snapshot.draft || row.snapshot.published || {};
+        container.append(
+          text(
+            'h3',
+            '버전 ' +
+              row.revision +
+              ' · ' +
+              new Date(row.saved_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })
+          ),
+          text('p', previous.name || previous.title || ''),
+          text('p', previous.description || previous.summary || '')
+        );
+        const restore = text('button', '이 버전을 수정 초안으로 복원', 'secondary');
+        restore.onclick = () => queueAction(historyState.item, 'history', row.event_id);
+        container.append(restore);
+        $('#history-list').append(container);
+      }
+      historyState.offset += rows.length;
+      $('#history-more').hidden = rows.length < 25;
+      if (!historyState.offset) $('#history-list').textContent = '아직 이전 수정 이력이 없습니다.';
+    } catch (error) {
+      $('#history-list').append(text('p', errorText(error)));
+    }
+  }
+  $('#history-more').onclick = appendHistory;
+  $('#close-history').onclick = () => $('#history-dialog').close();
+  $('#new-project').onclick = $('#new-draft-project').onclick = () => openEditor('project');
+  $('#new-entry').onclick = $('#new-draft-entry').onclick = () => openEditor('entry');
+  $('#new-idea').onclick = () => openEditor('idea');
+  $('#entry-project-filter').onchange = () => {
+    pageNumbers['entry-list'] = 0;
+    render();
+  };
+  $('#open-drafts').onclick = () => {
+    activateTab($('#manage-drafts'));
+    $('#manage-drafts').focus();
+  };
+  $('#open-backup').onclick = () => activateTab($('#manage-backup'));
+  $('#retry-migration').onclick = () => location.reload();
+  function backupTime() {
+    let stamp;
+    try {
+      stamp = localStorage.getItem('wanderer-backup:' + user?.id);
+    } catch {}
+    $('#backup-reminder').hidden = !!stamp && Date.now() - new Date(stamp).getTime() < 7 * 86400000;
+    $('#backup-time').textContent = stamp
+      ? '이 브라우저에서 마지막으로 내려받은 백업: ' + new Date(stamp).toLocaleString('ko-KR')
+      : '아직 이 브라우저에서 내려받은 백업이 없습니다. 내용을 추가한 뒤 주기적으로 백업해 주세요.';
+  }
+  $('#export-backup').onclick = async () => {
+    $('#export-backup').disabled = true;
+    $('#backup-status').textContent = '전체 데이터와 첨부 이미지를 준비하는 중…';
+    try {
+      const backup = await api.exportBackup(
+        (n, total) => ($('#backup-status').textContent = '이미지 백업 ' + n + ' / ' + total)
+      );
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }),
+        url = URL.createObjectURL(blob),
+        a = document.createElement('a');
+      a.href = url;
+      a.download = 'wanderer-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      try {
+        localStorage.setItem('wanderer-backup:' + user.id, new Date().toISOString());
+      } catch {}
+      backupTime();
+      $('#backup-status').textContent =
+        '백업 파일을 만들었습니다. 다운로드 폴더에서 확인해 주세요.';
+    } catch (error) {
+      $('#backup-status').textContent = errorText(error);
+    } finally {
+      $('#export-backup').disabled = false;
+    }
+  };
+  $('#import-backup').onchange = (e) => {
+    restoreFile = e.target.files[0];
+    restoreId = crypto.randomUUID();
+    $('#restore-backup').disabled = !restoreFile;
+  };
+  $('#restore-backup').onclick = async () => {
+    if (!restoreFile || !confirm('기존 자료는 유지하고 백업 내용을 새 초안으로 추가할까요?'))
+      return;
+    $('#restore-backup').disabled = true;
+    $('#backup-status').textContent = '이미지와 내용을 복원하는 중…';
+    try {
+      if (restoreFile.size > 100 * 1024 * 1024)
+        throw Error('100MB 이하의 백업 파일을 선택해 주세요.');
+      const result = await api.importBackup(JSON.parse(await restoreFile.text()), restoreId);
+      items = await api.adminItems();
+      render();
+      $('#backup-status').textContent = result.restored + '개 항목을 새 초안으로 복원했습니다.';
+      restoreFile = null;
+      $('#import-backup').value = '';
+    } catch (error) {
+      $('#backup-status').textContent = errorText(error);
+    } finally {
+      $('#restore-backup').disabled = !restoreFile;
+    }
+  };
+  function showLogin() {
+    user = null;
+    items = [];
+    $('#dashboard').hidden = true;
+    $('#migration-panel').hidden = true;
+    $('#recovery-panel').hidden = true;
+    $('#login-panel').hidden = false;
+  }
+  async function loadDashboard() {
+    user = await api.verifyAdmin();
+    if (!user) {
+      showLogin();
+      return;
+    }
+    $('#login-panel').hidden = true;
+    if ((await api.version()) !== 2) {
+      $('#migration-panel').hidden = false;
+      message('확장 설정을 실행한 후 새로고침해 주세요. 기존 홈페이지는 계속 볼 수 있습니다.');
+      return;
+    }
+    items = await api.adminItems();
+    $('#migration-panel').hidden = true;
+    $('#dashboard').hidden = false;
+    $('#logout').hidden = false;
+    $('#account-label').textContent = user.email + ' · 관리자';
+    render();
+    backupTime();
+  }
+  $('#login-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    message('로그인 확인 중…');
+    try {
+      await api.login($('#login-email').value.trim(), $('#login-password').value);
+      $('#login-password').value = '';
+      await loadDashboard();
+      message('');
+    } catch (error) {
+      message(errorText(error), true);
+      showLogin();
+    } finally {
+      button.disabled = false;
+    }
   });
   $('#request-reset').addEventListener('click', async () => {
     const email = $('#login-email');
-    if (!email.reportValidity()) { email.focus(); return; }
-    const button = $('#request-reset'); button.disabled = true;
+    if (!email.reportValidity()) {
+      email.focus();
+      return;
+    }
+    const button = $('#request-reset');
+    button.disabled = true;
     message('재설정 이메일을 요청하고 있습니다…');
     try {
       await api.sendPasswordReset(email.value.trim());
-      message('등록된 계정이라면 재설정 이메일이 발송됩니다. 메일의 링크에서 새 비밀번호를 정해 주세요. 스팸함도 확인해 주세요.');
-    } catch (error) { message(errorText(error), true); }
-    finally { button.disabled = false; }
+      message(
+        '등록된 계정이라면 재설정 이메일이 발송됩니다. 메일의 링크에서 새 비밀번호를 정해 주세요. 스팸함도 확인해 주세요.'
+      );
+    } catch (error) {
+      message(errorText(error), true);
+    } finally {
+      button.disabled = false;
+    }
   });
-  $('#recovery-form').addEventListener('submit', async event => {
+  $('#recovery-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const password = $('#new-password').value;
-    if (password !== $('#confirm-password').value) { message('새 비밀번호와 확인 입력이 서로 다릅니다.', true); return; }
-    if (!password.trim()) { message('공백으로만 된 비밀번호는 사용할 수 없습니다.', true); return; }
-    const button = event.submitter; button.disabled = true; message('비밀번호를 변경하고 있습니다…');
+    if (password !== $('#confirm-password').value) {
+      message('새 비밀번호와 확인 입력이 서로 다릅니다.', true);
+      return;
+    }
+    if (!password.trim()) {
+      message('공백으로만 된 비밀번호는 사용할 수 없습니다.', true);
+      return;
+    }
+    const button = event.submitter;
+    button.disabled = true;
+    message('비밀번호를 변경하고 있습니다…');
     try {
       await api.updatePassword(password);
-      $('#recovery-form').reset(); $('#login-password').value = '';
-      showLogin(); message('비밀번호를 변경했습니다. 새 비밀번호로 로그인해 주세요.');
-    } catch (error) { message(errorText(error), true); }
-    finally { button.disabled = false; }
+      $('#recovery-form').reset();
+      $('#login-password').value = '';
+      showLogin();
+      message('비밀번호를 변경했습니다. 새 비밀번호로 로그인해 주세요.');
+    } catch (error) {
+      message(errorText(error), true);
+    } finally {
+      button.disabled = false;
+    }
   });
   $('#logout').addEventListener('click', async () => {
     $('#logout').disabled = true;
-    try { await api.logout(); message('로그아웃했습니다.'); }
-    catch { message('이 브라우저에서 로그아웃했습니다. 서버 연결은 확인하지 못했습니다.', true); }
-    finally { $('#logout').disabled = false; showLogin(); }
+    try {
+      await api.logout();
+      message('로그아웃했습니다.');
+    } catch {
+      message('이 브라우저에서 로그아웃했습니다. 서버 연결은 확인하지 못했습니다.', true);
+    } finally {
+      $('#logout').disabled = false;
+      showLogin();
+    }
   });
   // 이메일 링크를 이미 열린 관리자 탭으로 열어도 복구 화면을 초기화합니다.
   window.addEventListener('hashchange', () => {
     const hash = new URLSearchParams(window.location.hash.slice(1));
-    if (hash.get('type') === 'recovery' || hash.has('error') || hash.has('error_code')) window.location.reload();
+    if (hash.get('type') === 'recovery' || hash.has('error') || hash.has('error_code'))
+      window.location.reload();
   });
+
   if (!api.configured || api.configurationError) {
-    projects = window.projects.map(project => ({ ...project, isPublished: true }));
-    entries = window.journalEntries.map(entry => ({ ...entry, isPublished: true }));
-    $('#setup-panel').hidden = false; $('#dashboard').hidden = false; render();
-    if (api.configurationError) message(api.configurationError, true);
+    $('#setup-panel').hidden = false;
+    message(api.configurationError || 'Supabase를 먼저 연결해 주세요.', true);
   } else {
     try {
       if (api.consumeRecoveryLink()) {
-        message('재설정 링크를 확인하고 있습니다…');
-        api.verifyRecovery().then(() => { $('#login-panel').hidden = true; $('#dashboard').hidden = true; $('#recovery-panel').hidden = false; message(''); $('#new-password').focus(); })
-          .catch(error => { showLogin(); message(errorText(error), true); });
+        api
+          .verifyRecovery()
+          .then(() => {
+            $('#recovery-panel').hidden = false;
+            $('#new-password').focus();
+          })
+          .catch((error) => {
+            showLogin();
+            message(errorText(error), true);
+          });
       } else {
-        message('관리자 계정을 확인하고 있습니다…');
-        loadDashboard().then(() => message('')).catch(error => { showLogin(); message(errorText(error), true); });
+        message('계정을 확인하는 중…');
+        loadDashboard()
+          .then(() => {
+            if (!$('#migration-panel').hidden) return;
+            message('');
+          })
+          .catch((error) => {
+            showLogin();
+            message(errorText(error), true);
+          });
       }
-    } catch (error) { showLogin(); message(errorText(error), true); }
+    } catch (error) {
+      showLogin();
+      message(errorText(error), true);
+    }
   }
 })();

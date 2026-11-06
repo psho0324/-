@@ -1,213 +1,466 @@
-// Browser integration with a simulated Supabase API; real RLS is tested separately.
-const { chromium } = require('playwright');
-const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const assert = require('node:assert/strict');
-const root = path.join(__dirname, '..');
-const seed = { window: {} }; vm.createContext(seed);
-for (const file of ['projects.js', 'journal.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), seed);
-const state = {
-  projects: seed.window.projects.map(p => ({ id:p.id, name:p.name, category:p.category, description:p.description, status:p.status, tags:[...p.tags], note:p.note, url:p.url, image_url:'', show_in_projects:p.showInProjects !== false, is_published:true, sort_order:0 })),
-  entries: seed.window.journalEntries.map(e => ({ id:e.id, project_id:e.projectId, date:e.date, title:e.title, summary:e.summary, body:e.body, is_published:true }))
-};
-let nextId = 4, failNextSave = false, refreshCount = 0;
-const errors = [];
-const recoveryRequests = [];
-let ownerPassword = "test-password", passwordUpdates = 0;
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  const file = path.resolve(root, '.' + (url.pathname === '/' ? '/index.html' : url.pathname));
-  if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404).end(); return; }
-  res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.html') ? 'text/html' : 'text/plain');
-  res.end(fs.readFileSync(file));
-});
-async function apiRoute(route) {
-  const req = route.request(), url = new URL(req.url()), method = req.method();
-  const payload = req.postDataJSON();
-  const token = req.headers().authorization;
-  const admin = token === 'Bearer test-admin';
-  const reply = (status, body) => route.fulfill({ status, contentType:'application/json', body:body === undefined ? '' : JSON.stringify(body) });
-  if (url.pathname === '/auth/v1/token') {
-    if (url.searchParams.get('grant_type') === 'refresh_token') { refreshCount++; return reply(200, { access_token:'test-admin', refresh_token:'test-refresh', expires_in:3600, user:{id:'owner',email:'owner@example.test'} }); }
-    if (payload.password !== (payload.email === 'owner@example.test' ? ownerPassword : 'test-password')) return reply(400, {error_code:'invalid_credentials',msg:'Invalid login credentials'});
-    return reply(200, {access_token:payload.email === 'owner@example.test' ? 'test-admin' : 'test-non-admin',refresh_token:'test-refresh',expires_in:3600,user:{id:payload.email === 'owner@example.test' ? 'owner' : 'other',email:payload.email}});
-  }
-  if (url.pathname === '/auth/v1/recover') { recoveryRequests.push({email:payload.email,redirect:url.searchParams.get('redirect_to')}); return reply(200,{}); }
-  if (url.pathname === '/auth/v1/user') {
-    if (!admin && token !== 'Bearer test-non-admin') return reply(401,{error_code:'bad_jwt'});
-    if (method === 'PUT') { ownerPassword=payload.password; passwordUpdates++; }
-    return reply(200,{id:admin ? 'owner':'other',email:admin ? 'owner@example.test':'other@example.test'});
-  }
-  if (url.pathname === '/auth/v1/logout') return reply(204);
-  if (url.pathname === '/rest/v1/site_admins') return reply(200, admin ? [{user_id:'owner'}] : []);
-  const type = url.pathname === '/rest/v1/projects' ? 'projects' : 'entries';
-  if (method === 'GET') {
-    let list = state[type];
-    if (!admin) list = list.filter(row => row.is_published && (type !== 'entries' || state.projects.some(p => p.id === row.project_id && p.is_published)));
-    return reply(200,list);
-  }
-  if (!admin) return reply(403,{message:'not allowed'});
-  if (failNextSave) { failNextSave = false; return reply(500,{message:'simulated failure'}); }
-  if (method === 'POST') {
-    const row = type === 'entries' ? {...payload,id:nextId++} : {...payload};
-    state[type].push(row); return reply(201,[row]);
-  }
-  const id = url.searchParams.get('id')?.slice(3);
-  const index = state[type].findIndex(row => String(row.id) === id);
-  if (index < 0) return reply(200,[]);
-  if (method === 'PATCH') { Object.assign(state[type][index],payload); return reply(200,[state[type][index]]); }
-  if (method === 'DELETE') { const [deleted] = state[type].splice(index,1); return reply(200,[deleted]); }
-  return reply(400,{});
+// Real PostgreSQL policies/RPCs behind a simulated Supabase HTTP/auth/storage boundary.
+const { chromium } = require('playwright'),
+  { PGlite } = require('@electric-sql/pglite');
+const fs = require('node:fs'),
+  path = require('node:path'),
+  http = require('node:http'),
+  assert = require('node:assert/strict');
+const root = path.join(__dirname, '..'),
+  owner = '00000000-0000-0000-0000-000000000001',
+  other = '00000000-0000-0000-0000-000000000002';
+let db,
+  browser,
+  server,
+  base,
+  ownerPassword = 'test-password',
+  loseSave = false,
+  saveLost = false,
+  failJournal = false;
+const files = new Map(),
+  errors = [];
+let queue = Promise.resolve();
+function sqlAs(token, sql, args = []) {
+  const work = queue.then(async () => {
+    try {
+      await db.exec('begin');
+      await db.query("select set_config('request.jwt.claim.sub',$1,true)", [
+        token === 'test-owner' ? owner : token === 'test-other' ? other : ''
+      ]);
+      await db.exec('set local role ' + (token ? 'authenticated' : 'anon'));
+      const result = await db.query(sql, args);
+      await db.exec('commit');
+      return result;
+    } catch (e) {
+      await db.exec('rollback');
+      throw e;
+    }
+  });
+  queue = work.catch(() => {});
+  return work;
 }
-async function makeContext(browser, base, configured) {
+async function routeApi(route) {
+  const req = route.request(),
+    url = new URL(req.url()),
+    token = (req.headers().authorization || '').replace('Bearer ', ''),
+    method = req.method();
+  const result = (status, body, type = 'application/json') =>
+    route.fulfill({
+      status,
+      contentType: type,
+      body: Buffer.isBuffer(body) ? body : JSON.stringify(body)
+    });
+  try {
+    if (url.pathname === '/auth/v1/token') {
+      const body = req.postDataJSON();
+      if (url.searchParams.get('grant_type') === 'refresh_token')
+        return result(200, {
+          access_token: 'test-owner',
+          refresh_token: 'refresh',
+          expires_in: 3600
+        });
+      if (body.password !== (body.email === 'owner@example.test' ? ownerPassword : 'test-password'))
+        return result(400, { error_code: 'invalid_credentials' });
+      return result(200, {
+        access_token: body.email === 'owner@example.test' ? 'test-owner' : 'test-other',
+        refresh_token: 'refresh',
+        expires_in: 3600
+      });
+    }
+    if (url.pathname === '/auth/v1/user') {
+      if (!['test-owner', 'test-other'].includes(token)) return result(401, {});
+      if (method === 'PUT') ownerPassword = req.postDataJSON().password;
+      return result(200, {
+        id: token === 'test-owner' ? owner : other,
+        email: token === 'test-owner' ? 'owner@example.test' : 'other@example.test'
+      });
+    }
+    if (url.pathname === '/auth/v1/recover') return result(200, {});
+    if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204 });
+    if (url.pathname === '/rest/v1/site_admins') {
+      const rows = await sqlAs(token, 'select user_id from public.site_admins');
+      return result(200, rows.rows);
+    }
+    if (['/rest/v1/projects', '/rest/v1/journal_entries'].includes(url.pathname)) {
+      const table = url.pathname.endsWith('/projects') ? 'projects' : 'journal_entries';
+      const rows = await sqlAs(
+        token,
+        'select * from public.' + table + ' where is_published order by id limit 100'
+      );
+      return result(200, rows.rows);
+    }
+    if (url.pathname.startsWith('/storage/v1/object/')) {
+      const name = decodeURIComponent(url.pathname.split('workspace-media/')[1]);
+      const allowed = (
+        await sqlAs(token, 'select public.workspace_media_access($1,$2) as allowed', [
+          name,
+          method === 'POST'
+        ])
+      ).rows[0].allowed;
+      if (!allowed) return result(403, {});
+      if (method === 'POST') {
+        files.set(name, { bytes: req.postDataBuffer(), type: req.headers()['content-type'] });
+        return result(200, { Key: name });
+      }
+      if (!files.has(name)) return result(404, {});
+      const file = files.get(name);
+      return result(200, file.bytes, file.type);
+    }
+    if (url.pathname.startsWith('/rest/v1/rpc/')) {
+      const name = url.pathname.split('/').pop();
+      if (!/^workspace_[a-z_]+$/.test(name)) return result(404, {});
+      const body = req.postDataJSON() || {};
+      if (failJournal && name === 'workspace_public_list' && body.p_kind === 'entry')
+        return result(500, {});
+      const keys = Object.keys(body);
+      if (keys.some((k) => !/^p_[a-z_]+$/.test(k))) return result(400, {});
+      const response = await sqlAs(
+        token,
+        'select public.' +
+          name +
+          '(' +
+          keys.map((key, i) => key + '=> $' + (i + 1)).join(',') +
+          ') as result',
+        keys.map((k) => body[k])
+      );
+      if (loseSave && name === 'workspace_save' && !saveLost) {
+        saveLost = true;
+        return route.abort('connectionfailed');
+      }
+      return result(200, response.rows[0].result);
+    }
+    return result(404, { code: 'PGRST202' });
+  } catch (e) {
+    return result(e.code === 'PT409' ? 409 : e.code === '42501' ? 403 : 400, {
+      code: e.code,
+      message: e.message
+    });
+  }
+}
+async function context(configured = true) {
   const context = await browser.newContext();
-  context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
-  await context.route('**/config.js*', route => route.fulfill({contentType:'text/javascript',body:configured ? "window.WORKSPACE_CONFIG={supabaseUrl:'https://workspace-test.supabase.co',publishableKey:'sb_publishable_test',useDatabase:true}" : 'window.WORKSPACE_CONFIG={};'}));
-  await context.route('https://workspace-test.supabase.co/**',apiRoute);
+  context.on('page', (page) => page.on('pageerror', (e) => errors.push(e.message)));
+  await context.route('**/config.js*', (route) =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: configured
+        ? "window.WORKSPACE_CONFIG={supabaseUrl:'https://workspace-test.supabase.co',publishableKey:'sb_publishable_test',useDatabase:true}"
+        : 'window.WORKSPACE_CONFIG={}'
+    })
+  );
+  await context.route('https://workspace-test.supabase.co/**', routeApi);
   return context;
 }
-async function login(page, base, email = 'owner@example.test') {
+async function login(page, email = 'owner@example.test') {
   await page.goto(base + '/admin.html');
   await page.locator('#login-email').fill(email);
-  await page.locator('#login-password').fill(email === 'owner@example.test' ? ownerPassword : 'test-password');
-  await page.getByRole('button',{name:'로그인',exact:true}).click();
+  await page
+    .locator('#login-password')
+    .fill(email === 'owner@example.test' ? ownerPassword : 'test-password');
+  await page.getByRole('button', { name: '로그인', exact: true }).click();
 }
-(async()=>{
-  await new Promise(resolve => server.listen(0,'0.0.0.0',resolve));
-  const base = 'http://localhost:' + server.address().port;
-  let browser;
+async function save(page) {
+  await page.locator('#save-item').click();
+  await page.locator('#editor').waitFor({ state: 'hidden' });
+}
+function card(page, id, list = 'project-list') {
+  return page.locator('#' + list + ' .admin-item[data-item-id="' + id + '"]');
+}
+(async () => {
+  db = new PGlite();
+  await db.exec(
+    `create role anon;create role authenticated;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;grant usage on schema auth to anon,authenticated;insert into auth.users values('${owner}'),('${other}');`
+  );
+  await db.exec(fs.readFileSync(path.join(root, 'supabase/schema.sql'), 'utf8'));
+  await db.exec(fs.readFileSync(path.join(root, 'supabase/migrations/002_workspace.sql'), 'utf8'));
+  await db.exec(`insert into site_admins values('${owner}')`);
+  server = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://localhost'),
+      file = path.resolve(root, '.' + (u.pathname === '/' ? '/index.html' : u.pathname));
+    if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.setHeader(
+      'Content-Type',
+      file.endsWith('.js')
+        ? 'text/javascript'
+        : file.endsWith('.css')
+          ? 'text/css'
+          : file.endsWith('.html')
+            ? 'text/html'
+            : 'text/plain'
+    );
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise((r) => server.listen(0, '0.0.0.0', r));
+  base = 'http://localhost:' + server.address().port;
   try {
-    browser = await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE || '/usr/bin/chromium',headless:true,args:['--no-sandbox']});
-    const offline = await makeContext(browser,base,false);
-    const preview = await offline.newPage(); await preview.goto(base+'/admin.html');
-    await preview.locator('#setup-panel').waitFor();
-    assert(await preview.locator('#new-project').isDisabled()); assert(await preview.locator('#new-entry').isDisabled());
-    assert(!await preview.locator('#login-panel').isVisible());
-    await preview.goto(base+'/'); await preview.locator('.project-card').waitFor(); assert.equal(await preview.locator('.project-card').count(),1);
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_EXECUTABLE || chromium.executablePath(),
+      headless: true,
+      args: ['--no-sandbox']
+    });
+    const offline = await context(false),
+      offlinePage = await offline.newPage();
+    await offlinePage.goto(base + '/');
+    await offlinePage.locator('.project-card').waitFor();
+    await offlinePage.getByRole('tab', { name: '다음 실험' }).click();
+    assert(await offlinePage.locator('#panel-ideas').isVisible());
     await offline.close();
-    const nonAdmin = await makeContext(browser,base,true); const forbidden = await nonAdmin.newPage();
-    await login(forbidden,base,'other@example.test'); await forbidden.locator('#notice.error').waitFor();
-    assert(!await forbidden.locator('#dashboard').isVisible()); assert(await forbidden.locator('#login-panel').isVisible()); await nonAdmin.close();
-    const recoveryContext = await makeContext(browser,base,true); const recovery = await recoveryContext.newPage();
-    await recovery.goto(base+'/admin.html'); await recovery.locator('#login-panel').waitFor();
-    await recovery.locator('#login-email').fill('owner@example.test'); await recovery.locator('#login-password').fill('incorrect');
-    await recovery.getByRole('button',{name:'로그인',exact:true}).click(); await recovery.locator('#notice.error').waitFor();
-    assert.match(await recovery.locator('#notice').textContent(),/이메일 또는 비밀번호/);
-    await recovery.locator('#request-reset').click(); await recovery.getByText('등록된 계정이라면 재설정 이메일이 발송됩니다.',{exact:false}).waitFor();
-    assert.equal(recoveryRequests.length,1); assert.equal(recoveryRequests[0].redirect,base+'/admin.html');
-    await recovery.goto(base+'/admin.html#access_token=test-admin&refresh_token=test-refresh&type=recovery&expires_in=3600');
-    await recovery.locator('#recovery-panel').waitFor(); assert.equal(new URL(recovery.url()).hash,'');
-    assert(!await recovery.locator('#dashboard').isVisible());
-    await recovery.reload(); await recovery.locator('#recovery-panel').waitFor();
-    await recovery.locator('#new-password').fill('new-test-password'); await recovery.locator('#confirm-password').fill('mismatched');
-    await recovery.getByRole('button',{name:'비밀번호 변경',exact:true}).click(); await recovery.locator('#notice.error').waitFor();
-    assert.equal(passwordUpdates,0);
-    await recovery.locator('#confirm-password').fill('new-test-password');
-    await recovery.getByRole('button',{name:'비밀번호 변경',exact:true}).click(); await recovery.locator('#login-panel').waitFor();
-    assert.equal(passwordUpdates,1); assert.equal(ownerPassword,'new-test-password');
-    assert.equal(await recovery.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
-    await recovery.goto(base+'/admin.html#error=access_denied&error_code=otp_expired');
-    await recovery.locator('#notice.error').waitFor(); assert.equal(new URL(recovery.url()).hash,'');
-    assert.match(await recovery.locator('#notice').textContent(),/만료/); assert(!await recovery.locator('#recovery-panel').isVisible());
-    await recovery.goto(base+'/admin.html#access_token=invalid&refresh_token=invalid&type=recovery');
-    await recovery.locator('#notice.error').waitFor(); assert(!await recovery.locator('#recovery-panel').isVisible());
-    assert.equal(await recovery.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
-    await recoveryContext.close();
-    const owner = await makeContext(browser,base,true); const page = await owner.newPage();
-    await page.goto(base+'/admin.html'); await page.locator('#login-panel').waitFor();
-    await login(page,base); await page.locator('#dashboard').waitFor(); assert.equal(await page.locator('#project-list .admin-item').count(),2);
-    const calendarEditor = page.locator('#project-list .admin-item').filter({has:page.getByRole('heading',{name:'캘린더 앱',exact:true})});
-    await calendarEditor.getByRole('button',{name:'수정',exact:true}).click();
-    assert.equal(await page.locator('#project-category').evaluate(el=>el.tagName),'SELECT');
-    assert.equal(await page.locator('#project-category').inputValue(),'PRODUCTIVITY');
-    await page.locator('.close-editor[aria-label]').click();
-    const legacy = state.projects.find(project=>project.id==='workspace'); legacy.category='예전 맞춤 분류';
-    await page.reload(); await page.locator('#dashboard').waitFor();
-    await page.locator('#project-list .admin-item').filter({has:page.getByRole('heading',{name:'떠돌이의 작업실',exact:true})}).getByRole('button',{name:'수정',exact:true}).click();
-    assert.equal(await page.locator('#project-category').inputValue(),'예전 맞춤 분류');
-    await page.locator('.close-editor[aria-label]').click();
-    await page.locator('#open-drafts').click(); assert(await page.locator('#list-drafts').isVisible());
-    await page.locator('#new-draft-project').click(); await page.locator('#project-name').fill('<script>unsafe</script>');
-    assert.equal(await page.locator('#project-category').inputValue(),'OTHER');
-    await page.locator('#project-category').selectOption('TOOLS');
+    await db.exec('grant select on public.projects,public.journal_entries to anon,authenticated');
+    const previous = await context(),
+      previousPage = await previous.newPage();
+    await previous.route('**/rpc/workspace_version', (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 'PGRST202' })
+      })
+    );
+    await previousPage.goto(base + '/');
+    await previousPage.locator('.project-card').waitFor();
+    assert.equal(await previousPage.locator('.project-card').count(), 1);
+    await login(previousPage);
+    await previousPage.locator('#migration-panel').waitFor();
+    assert(!(await previousPage.locator('#dashboard').isVisible()));
+    await previous.close();
+    await db.exec('revoke all on public.projects,public.journal_entries from anon,authenticated');
+    const denied = await context(),
+      deniedPage = await denied.newPage();
+    await login(deniedPage, 'other@example.test');
+    await deniedPage.locator('#notice.error').waitFor();
+    assert(!(await deniedPage.locator('#dashboard').isVisible()));
+    await denied.close();
+    const ownerContext = await context(),
+      page = await ownerContext.newPage();
+    await login(page);
+    await page.locator('#dashboard').waitFor();
+    await page.locator('#new-project').click();
+    await page.locator('#project-name').fill('Review test');
+    await page.locator('#project-description').fill('Brief introduction');
     await page.locator('#project-advanced summary').click();
-    await page.locator('#project-id').fill('new-app'); await page.locator('#project-description').fill('New application');
-    await page.locator('#project-url').fill('http://example.test'); await page.locator('#save-item').click(); await page.locator('#editor-error').waitFor();
-    assert(await page.locator('#editor').isVisible()); assert.equal(state.projects.length,2);
-    await page.locator('#project-url').fill('https://example.test'); await page.locator('#project-tags').fill('도구, 실험');
-    failNextSave = true; await page.locator('#save-item').click(); await page.locator('#editor-error').waitFor();
-    assert(await page.locator('#editor').isVisible()); assert.equal(await page.locator('#project-name').inputValue(),'<script>unsafe</script>');
-    await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    assert.equal(state.projects.length,3); assert.equal(state.projects.find(p=>p.id==='new-app').is_published,false);
-    assert.equal(await page.locator('#stat-drafts').textContent(),'1');
-    assert.equal(await page.locator('#draft-list .admin-item').count(),1);
-    assert.equal(state.projects.find(project=>project.id==='new-app').category,'TOOLS');
-    assert.equal(await page.locator('#description-count').textContent(),'15 / 500');
-    assert.equal(await page.locator('#draft-tab-count').textContent(),'1');
-    const visitor = await makeContext(browser,base,true); const publicPage = await visitor.newPage();
-    await publicPage.goto(base+'/'); await publicPage.locator('.project-card').waitFor(); assert.equal(await publicPage.locator('.project-card').count(),1);
-    const newCard = page.locator('#project-list .admin-item').filter({has:page.getByRole('heading',{name:'<script>unsafe</script>',exact:true})});
-    await page.locator('#draft-list .admin-item').getByRole('button',{name:'수정',exact:true}).click(); assert(await page.locator('#project-id').isDisabled());
-    assert.equal(await page.locator('#project-category').inputValue(),'TOOLS');
-    await page.locator('#publish-state').selectOption('published'); await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    assert.equal(await page.locator('#draft-list .admin-item').count(),0);
-    await page.getByRole('tab',{name:'프로젝트 관리'}).click();
-    await publicPage.reload(); await publicPage.locator('.project-card').nth(1).waitFor(); assert.equal(await publicPage.locator('.project-card').count(),2);
-    assert.equal(await publicPage.locator('.project-card script').count(),0);
-    await page.getByRole('tab',{name:'제작 기록 관리'}).click(); await page.locator('#new-entry').click();
-    await page.locator('#entry-project').selectOption('new-app'); await page.locator('#entry-title').fill('First update');
-    await page.locator('#entry-summary').fill('A short summary'); await page.locator('#entry-body').fill('Line one\nLine two');
-    await page.locator('#publish-state').selectOption('published'); await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    assert.equal(state.entries.length,4);
-    await publicPage.reload(); await publicPage.getByRole('button',{name:'<script>unsafe</script> 제작 기록',exact:true}).click();
-    assert.equal(await publicPage.locator('.journal-entry').count(),1); assert.equal(await publicPage.locator('.journal-entry h3').textContent(),'First update');
-    await page.getByRole('tab',{name:'프로젝트 관리'}).click(); await newCard.getByRole('button',{name:'삭제',exact:true}).click();
-    assert.match(await page.locator('#notice').textContent(),/연결되어/); assert(!await page.locator('#delete-dialog').isVisible());
-    await newCard.getByRole('button',{name:'수정',exact:true}).click(); await page.locator('#publish-state').selectOption('draft');
-    await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    await publicPage.reload(); await publicPage.getByRole('tab',{name:'제작 기록'}).click();
-    assert.equal(await publicPage.locator('.journal-entry').count(),3);
-    await page.getByRole('tab',{name:'제작 기록 관리'}).click(); await page.locator('#entry-project-filter').selectOption('new-app');
-    await page.locator('#entry-list').getByRole('button',{name:'삭제',exact:true}).click(); await page.locator('#confirm-delete').click();
-    await page.locator('#delete-dialog').waitFor({state:'hidden'}); assert.equal(state.entries.length,3);
-    await page.getByRole('tab',{name:'프로젝트 관리'}).click(); await newCard.getByRole('button',{name:'삭제',exact:true}).click();
-    await page.locator('#confirm-delete').click(); await page.locator('#delete-dialog').waitFor({state:'hidden'}); assert.equal(state.projects.length,2);
-    await page.locator('#open-drafts').click(); await page.locator('#new-draft-project').click();
-    await page.locator('#project-name').fill('아이디어 초안'); await page.locator('#project-description').fill('아직 만들기 전인 간단한 아이디어 소개');
-    assert.match(await page.locator('#project-id').inputValue(),/^project-[a-z0-9-]+$/);
-    await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    const minimalDraft=state.projects.find(project=>project.name==='아이디어 초안');
-    assert(minimalDraft); assert.equal(minimalDraft.url,''); assert.equal(minimalDraft.note,''); assert.equal(minimalDraft.is_published,false);
-    await page.reload(); await page.locator('#dashboard').waitFor(); await page.locator('#open-drafts').click();
-    assert.match(await page.locator('#draft-list .item-copy p').textContent(),/간단한 아이디어/);
-    await publicPage.reload(); await publicPage.locator('.project-card').waitFor(); assert.equal(await publicPage.locator('.project-card').count(),1);
-    await page.locator('#draft-list').getByRole('button',{name:'삭제',exact:true}).click();
-    await page.locator('#confirm-delete').click(); await page.locator('#delete-dialog').waitFor({state:'hidden'});
-    await page.locator('#new-draft-entry').click(); await page.locator('#entry-project').selectOption('calendar');
-    await page.locator('#entry-title').fill('아직 공개 전인 기록'); await page.locator('#entry-summary').fill('짧은 요약'); await page.locator('#entry-body').fill('비공개로 작성 중인 내용');
-    await page.locator('#save-item').click(); await page.locator('#editor').waitFor({state:'hidden'});
-    assert.equal(await page.locator('#draft-list .admin-item').count(),1);
-    await publicPage.reload(); await publicPage.getByRole('tab',{name:'제작 기록'}).click(); assert.equal(await publicPage.locator('.journal-entry').count(),3);
-    await page.locator('#draft-list').getByRole('button',{name:'삭제',exact:true}).click(); await page.locator('#confirm-delete').click(); await page.locator('#delete-dialog').waitFor({state:'hidden'});
-    assert.equal(await page.locator('#stat-drafts').textContent(),'0'); assert(await page.locator('#draft-list .empty-list').isVisible());
-    await page.setViewportSize({width:390,height:844});
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await page.locator('#new-draft-project').click(); await page.screenshot({path:'/tmp/project-editor-mobile.png',fullPage:true}); await page.locator('.close-editor[aria-label]').click();
-    await page.setViewportSize({width:1280,height:900}); await page.getByRole('tab',{name:'프로젝트 관리'}).click();
-    // A copied expired session must be refreshed, not silently treated as authenticated.
-    await page.evaluate(()=>{const s=JSON.parse(sessionStorage.getItem('wanderer-admin-session-v1'));s.expires_at=1;sessionStorage.setItem('wanderer-admin-session-v1',JSON.stringify(s));});
-    await page.reload(); await page.locator('#dashboard').waitFor(); assert.equal(refreshCount,1);
-    await page.screenshot({path:'/tmp/admin-desktop.png',fullPage:true});
-    await page.setViewportSize({width:390,height:844}); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await page.locator('#new-project').click(); assert.equal(await page.locator('#editor').evaluate(el=>el.scrollWidth>el.clientWidth),false);
-    await page.locator('.close-editor[aria-label]').click(); await page.screenshot({path:'/tmp/admin-mobile.png',fullPage:true});
-    await page.locator('#logout').click(); await page.locator('#login-panel').waitFor();
-    assert.equal(await page.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
-    await page.reload(); await page.locator('#login-panel').waitFor(); assert(!await page.locator('#dashboard').isVisible());
-    assert.deepEqual(errors,[]);
-    console.log('PASS: disconnected read-only preview; login and denied non-admin; project/record CRUD; failed-save input retention; HTTPS validation; draft publication; public refresh; parent-draft hiding; FK UI guard; safe text rendering; session refresh/logout; mobile layouts. Category dropdown and legacy values, draft creation and library, summary counter, publication removal from drafts, minimal name/summary saves, mobile draft editor verified. Password-recovery email request, token removal, reload, mismatch, password update, expired/invalid links verified. Auth/API simulated; production Supabase not tested.');
-    await owner.close(); await visitor.close();
-  } finally { if(browser)await browser.close(); await new Promise(resolve=>server.close(resolve)); }
-})().catch(error=>{console.error(error);process.exitCode=1;});
+    await page.locator('#project-id').fill('INVALID SPACE');
+    assert.equal(await page.locator('#project-id').evaluate((el) => el.checkValidity()), false);
+    await page.locator('#project-id').fill('all');
+    await page.locator('#project-category').selectOption('TOOLS');
+    await page
+      .locator('#project-tags')
+      .fill(
+        'productivity, calendar, automation, personal, daily, planning, focus, workflow, tools, project'
+      );
+    await page.locator('#project-url').fill('https://example.test');
+    await page.locator('#project-note').fill('Detailed description that stays reachable');
+    await page.locator('#publish-state').selectOption('published');
+    await save(page);
+    const visitors = await context(),
+      publicPage = await visitors.newPage();
+    await publicPage.goto(base + '/');
+    await publicPage.locator('.project-card').nth(1).waitFor();
+    const projectCard = publicPage
+      .locator('.project-card')
+      .filter({ has: publicPage.getByRole('heading', { name: 'Review test', exact: true }) });
+    await projectCard.getByRole('button', { name: '소개 보기' }).click();
+    await publicPage
+      .getByText('Detailed description that stays reachable', { exact: true })
+      .waitFor();
+    assert.match(publicPage.url(), /project=all/);
+    await publicPage.keyboard.press('Escape');
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('#project-name').fill('Unreleased title');
+    await page.locator('#publish-state').selectOption('draft');
+    await save(page);
+    await publicPage.reload();
+    await publicPage.getByRole('heading', { name: 'Review test', exact: true }).waitFor();
+    assert.equal(
+      await publicPage.getByRole('heading', { name: 'Unreleased title', exact: true }).count(),
+      0
+    );
+    // Unsaved content survives cancellation, reload and resume.
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('#project-description').fill('Unsaved local writing');
+    page.once('dialog', (d) => d.accept());
+    await page.keyboard.press('Escape');
+    await page.locator('#editor').waitFor({ state: 'hidden' });
+    await page.reload();
+    await page.locator('#dashboard').waitFor();
+    await page.locator('#resume-editor').click();
+    assert.equal(await page.locator('#project-description').inputValue(), 'Unsaved local writing');
+    await page.locator('#publish-state').selectOption('draft');
+    await save(page);
+    // Two real DB revisions reject a stale edit; typed contents are retained.
+    const secondContext = await context(),
+      second = await secondContext.newPage();
+    await login(second);
+    await second.locator('#dashboard').waitFor();
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    await card(second, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('#project-description').fill('First tab update');
+    await save(page);
+    await second.locator('#project-description').fill('Second tab update');
+    await second.locator('#save-item').click();
+    await second.locator('#editor-error').waitFor();
+    assert.match(await second.locator('#editor-error').textContent(), /다른 탭/);
+    assert.equal(await second.locator('#project-description').inputValue(), 'Second tab update');
+    await second.locator('#copy-conflict').click();
+    await save(second);
+    await secondContext.close();
+    // A committed save with a dropped response is replayed once.
+    await page.getByRole('tab', { name: '제작 기록 관리' }).click();
+    await page.locator('#new-entry').click();
+    await page.locator('#entry-project').selectOption('all');
+    await page.locator('#entry-title').fill('Exactly once');
+    await page.locator('#entry-summary').fill('Summary');
+    await page.locator('#entry-body').fill('Body');
+    await page.locator('#publish-state').selectOption('published');
+    loseSave = true;
+    await page.locator('#save-item').click();
+    await page.locator('#editor-error').waitFor();
+    await save(page);
+    loseSave = false;
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int as n from workspace_items where kind='entry' and published->>'title'='Exactly once'"
+        )
+      ).rows[0].n,
+      1
+    );
+    await publicPage.reload();
+    await publicPage.getByRole('tab', { name: '제작 기록' }).click();
+    await publicPage.locator('[data-journal-filter="project:all"]').waitFor();
+    await publicPage.locator('[data-journal-filter="project:all"]').click();
+    await publicPage.getByRole('heading', { name: 'Exactly once', exact: true }).waitFor();
+    await publicPage.waitForFunction(
+      () => document.querySelectorAll('.journal-entry').length === 1
+    );
+    assert.equal(await publicPage.locator('.journal-entry').count(), 1);
+    failJournal = true;
+    await publicPage.reload();
+    await publicPage.getByRole('tab', { name: '제작 기록' }).click();
+    await publicPage.locator('#entry-retry').waitFor();
+    assert((await publicPage.locator('.project-card').count()) > 0);
+    await publicPage.getByRole('tab', { name: '다음 실험' }).click();
+    assert(await publicPage.locator('#panel-ideas').isVisible());
+    failJournal = false;
+    await publicPage.getByRole('tab', { name: '제작 기록' }).click();
+    await publicPage.locator('#entry-retry').click();
+    // Ideas and image uploads use actual SQL authorization; draft media stays private.
+    await page.getByRole('tab', { name: '다음 실험', exact: true }).click();
+    await page.locator('#new-idea').click();
+    await page.locator('#idea-title').fill('New experiment');
+    await page.locator('#idea-summary').fill('A concrete new idea');
+    await page.locator('#publish-state').selectOption('published');
+    await save(page);
+    await publicPage.reload();
+    await publicPage.getByRole('tab', { name: '다음 실험' }).click();
+    await publicPage.getByRole('heading', { name: 'New experiment', exact: true }).waitFor();
+    await page.getByRole('tab', { name: '프로젝트 관리' }).click();
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6l5sAAAAASUVORK5CYII=',
+      'base64'
+    );
+    await page
+      .locator('#project-upload')
+      .setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png });
+    await page
+      .getByText('대표 이미지를 첨부했습니다. 저장 후 적용됩니다.', { exact: true })
+      .waitFor();
+    const imagePath = await page.locator('#project-image').inputValue();
+    await save(page);
+    assert.equal(
+      (
+        await sqlAs('', 'select public.workspace_media_access($1,false) as allowed', [
+          imagePath.slice(8)
+        ])
+      ).rows[0].allowed,
+      false
+    );
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('#publish-state').selectOption('published');
+    await save(page);
+    assert.equal(
+      (
+        await sqlAs('', 'select public.workspace_media_access($1,false) as allowed', [
+          imagePath.slice(8)
+        ])
+      ).rows[0].allowed,
+      true
+    );
+    await publicPage.reload();
+    await publicPage.locator('.project-card').nth(1).waitFor();
+    await publicPage.setViewportSize({ width: 390, height: 844 });
+    const tagBox = await publicPage
+      .locator('.project-card')
+      .filter({ has: publicPage.getByRole('heading', { name: 'Unreleased title', exact: true }) })
+      .locator('.tags')
+      .evaluate((el) => ({ w: el.clientWidth, content: el.scrollWidth }));
+    assert(tagBox.content <= tagBox.w + 1);
+    await publicPage.screenshot({ path: '/tmp/fixed-public-mobile.png', fullPage: true });
+    await card(page, 'all').getByRole('button', { name: '휴지통', exact: true }).click();
+    await page.locator('#confirm-delete').click();
+    await page.locator('#delete-dialog').waitFor({ state: 'hidden' });
+    await page.getByRole('tab', { name: '휴지통', exact: true }).click();
+    await card(page, 'all', 'trash-list')
+      .getByRole('button', { name: '복원', exact: true })
+      .click();
+    await page.locator('#confirm-delete').click();
+    await page.locator('#delete-dialog').waitFor({ state: 'hidden' });
+    assert.equal(
+      (await db.query("select published from workspace_items where kind='project' and id='all'"))
+        .rows[0].published,
+      null
+    );
+    await page.getByRole('tab', { name: '프로젝트 관리' }).click();
+    await card(page, 'all').getByRole('button', { name: '이력', exact: true }).click();
+    await page.locator('.history-row').first().waitFor();
+    await page.locator('#close-history').click();
+    await page.getByRole('tab', { name: '백업·복원' }).click();
+    const download = page.waitForEvent('download');
+    await page.locator('#export-backup').click();
+    const downloaded = await download;
+    const backup = JSON.parse(fs.readFileSync(await downloaded.path(), 'utf8'));
+    assert.equal(backup.version, 2);
+    assert(backup.media.length);
+    await page.locator('#import-backup').setInputFiles({
+      name: 'backup.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify(backup))
+    });
+    page.once('dialog', (d) => d.accept());
+    await page.locator('#restore-backup').click();
+    await page.getByText(/개 항목을 새 초안으로 복원했습니다/).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false
+    );
+    await page.screenshot({ path: '/tmp/fixed-admin-mobile.png', fullPage: true });
+    await page.locator('#logout').click();
+    await page.locator('#login-panel').waitFor();
+    await page.locator('#login-email').fill('owner@example.test');
+    await page.locator('#request-reset').click();
+    await page.getByText(/등록된 계정이라면/).waitFor();
+    await page.goto(
+      base + '/admin.html#access_token=test-owner&refresh_token=refresh&type=recovery'
+    );
+    await page.locator('#recovery-panel').waitFor();
+    assert.equal(new URL(page.url()).hash, '');
+    await page.locator('#new-password').fill('new-test-password');
+    await page.locator('#confirm-password').fill('new-test-password');
+    await page.getByRole('button', { name: '비밀번호 변경', exact: true }).click();
+    await page.locator('#login-panel').waitFor();
+    assert.equal(ownerPassword, 'new-test-password');
+    assert.deepEqual(errors, []);
+    console.log(
+      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, public/draft separation, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
+    );
+  } finally {
+    if (browser) await browser.close();
+    await new Promise((r) => server.close(r));
+    await db.close();
+  }
+})().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});
