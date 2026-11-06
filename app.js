@@ -45,3 +45,28 @@ document.querySelector('#reset-filter').addEventListener('click', () => render()
 dialog.querySelector('.close').addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close(); } });
 render();
+
+// 카테고리 탭: 클릭과 방향키로 이동하고 한 패널씩 표시합니다.
+const categoryTabs = [...document.querySelectorAll('[role="tab"]')];
+function selectCategory(tab) {
+  for (const item of categoryTabs) {
+    const selected = item === tab;
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+  }
+}
+categoryTabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => selectCategory(tab));
+  tab.addEventListener('keydown', event => {
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % categoryTabs.length;
+    if (event.key === 'ArrowLeft') next = (index - 1 + categoryTabs.length) % categoryTabs.length;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = categoryTabs.length - 1;
+    if (next === undefined) return;
+    event.preventDefault();
+    selectCategory(categoryTabs[next]);
+    categoryTabs[next].focus();
+  });
+});
