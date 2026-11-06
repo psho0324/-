@@ -34,7 +34,7 @@ function render(filter = 'all') {
       image.addEventListener('error', () => { image.hidden = true; });
       card.prepend(image);
     }
-    card.querySelector('.category').textContent = project.category;
+    card.querySelector('.category').textContent = window.PROJECT_CATEGORIES.find(category => category.value === project.category)?.label || project.category;
     card.querySelector('h3').textContent = project.name;
     card.querySelector('.description').textContent = project.description;
     card.querySelector('.status').textContent = project.status === 'live' ? '● 사용 가능' : '● 개발 중';

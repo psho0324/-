@@ -2,6 +2,8 @@
   const api = window.WorkspaceBackend;
   const $ = selector => document.querySelector(selector);
   let projects = [], entries = [], canEdit = false, editing = null, pendingDelete = null, busy = false;
+  const categories = window.PROJECT_CATEGORIES;
+  const categoryLabel = value => categories.find(category => category.value === value)?.label || value || '기타';
   const editor = $('#editor'), form = $('#editor-form');
   function message(text, error = false) {
     $('#notice').textContent = text; $('#notice').hidden = !text; $('#notice').classList.toggle('error', error);
@@ -21,19 +23,24 @@
     const selectedProject = $('#entry-project-filter').value;
     $('#entry-project-filter').replaceChildren(new Option('전체 프로젝트', 'all'), ...projects.map(project => new Option(project.name, project.id)));
     if (projects.some(project => project.id === selectedProject)) $('#entry-project-filter').value = selectedProject;
-    for (const [type, list, container] of [['project', projects, $('#project-list')], ['entry', entries.filter(entry => $('#entry-project-filter').value === 'all' || entry.projectId === $('#entry-project-filter').value), $('#entry-list')]]) {
+    const draftItems = [
+      ...projects.filter(item => item.isPublished === false).map(item => ({ type: 'project', item })),
+      ...entries.filter(item => item.isPublished === false).map(item => ({ type: 'entry', item }))
+    ];
+    $('#draft-tab-count').textContent = draftItems.length;
+    function renderItems(container, items, emptyText) {
       container.replaceChildren();
-      if (!list.length) {
-        const empty = document.createElement('p'); empty.className = 'empty-list'; empty.textContent = type === 'project' ? '아직 프로젝트가 없어요. 첫 프로젝트를 추가해 보세요.' : '아직 제작 기록이 없어요. 첫 이야기를 남겨 보세요.'; container.append(empty);
+      if (!items.length) {
+        const empty = document.createElement('p'); empty.className = 'empty-list'; empty.textContent = emptyText; container.append(empty);
       }
-      for (const item of list) {
+      for (const { type, item } of items) {
         const article = document.createElement('article'); article.className = 'admin-item';
         article.innerHTML = '<div class="item-copy"><h3></h3><p></p><div class="item-meta"></div></div><div class="row-actions"><button class="secondary edit">수정</button><button class="secondary delete">삭제</button></div>';
         article.querySelector('h3').textContent = type === 'project' ? item.name : item.title;
         article.querySelector('p').textContent = type === 'project' ? item.description : item.summary;
         const meta = article.querySelector('.item-meta'); meta.append(publishBadge(item));
         const detail = document.createElement('span');
-        detail.textContent = type === 'project' ? ((item.status === 'live' ? '사용 가능' : '개발 중') + (item.showInProjects === false ? ' · 기록에만 표시' : '')) : (projects.find(project => project.id === item.projectId)?.name || '프로젝트') + ' · ' + item.date;
+        detail.textContent = type === 'project' ? '프로젝트 · ' + categoryLabel(item.category) + ' · ' + (item.status === 'live' ? '사용 가능' : '개발 중') + (item.showInProjects === false ? ' · 기록에만 표시' : '') : '제작 기록 · ' + (projects.find(project => project.id === item.projectId)?.name || '프로젝트') + ' · ' + item.date;
         meta.append(detail);
         if (type === 'entry' && projects.find(project => project.id === item.projectId)?.isPublished === false) {
           const hidden = document.createElement('span'); hidden.textContent = '프로젝트가 초안이라 방문자에게 숨겨짐'; meta.append(hidden);
@@ -44,8 +51,11 @@
         container.append(article);
       }
     }
-    $('#new-project').disabled = !canEdit;
-    $('#new-entry').disabled = !canEdit || !projects.length;
+    renderItems($('#project-list'), projects.map(item => ({ type: 'project', item })), '아직 프로젝트가 없어요. 첫 프로젝트를 추가해 보세요.');
+    renderItems($('#entry-list'), entries.filter(entry => $('#entry-project-filter').value === 'all' || entry.projectId === $('#entry-project-filter').value).map(item => ({ type: 'entry', item })), '아직 제작 기록이 없어요. 첫 이야기를 남겨 보세요.');
+    renderItems($('#draft-list'), draftItems, '보관 중인 초안이 없어요. 프로젝트 초안이나 기록 초안으로 새로운 이야기를 시작해 보세요.');
+    $('#new-project').disabled = $('#new-draft-project').disabled = !canEdit;
+    $('#new-entry').disabled = $('#new-draft-entry').disabled = !canEdit || !projects.length;
   }
   function activateTab(tab) {
     for (const item of document.querySelectorAll('[role="tab"]')) {
@@ -62,6 +72,12 @@
     });
   });
   function setValue(id, value = '') { $('#' + id).value = value; }
+  function updateSaveLabel() {
+    $('#save-item').textContent = $('#publish-state').value === 'draft' ? '초안 저장' : '공개 저장';
+  }
+  function updateDescriptionCount() { $('#description-count').textContent = $('#project-description').value.length + ' / 500'; }
+  $('#publish-state').addEventListener('change', updateSaveLabel);
+  $('#project-description').addEventListener('input', updateDescriptionCount);
   function openEditor(type, item = null) {
     if (!canEdit) return;
     editing = { type, item }; form.reset(); $('#editor-error').hidden = true;
@@ -71,7 +87,12 @@
     $('#entry-fields').querySelectorAll('input,select,textarea').forEach(input => { input.disabled = type !== 'entry'; });
     setValue('publish-state', item?.isPublished ? 'published' : 'draft');
     if (type === 'project') {
-      for (const [field, value] of Object.entries({ name: item?.name, id: item?.id, category: item?.category, status: item?.status || 'building', description: item?.description, note: item?.note, url: item?.url, image: item?.imageUrl, tags: item?.tags?.join(', '), order: item?.sortOrder || 0 })) setValue('project-' + field, value ?? '');
+      const category = item?.category ?? 'OTHER';
+      const categoryOptions = categories.map(option => new Option(option.label, option.value));
+      if (!categories.some(option => option.value === category)) categoryOptions.push(new Option('기존 분류: ' + (category || '미지정'), category));
+      $('#project-category').replaceChildren(...categoryOptions);
+      $('#project-advanced').open = false;
+      for (const [field, value] of Object.entries({ name: item?.name, id: item?.id || 'project-' + crypto.randomUUID(), category, status: item?.status || 'building', description: item?.description, note: item?.note, url: item?.url, image: item?.imageUrl, tags: item?.tags?.join(', '), order: item?.sortOrder || 0 })) setValue('project-' + field, value ?? '');
       $('#project-id').disabled = Boolean(item); $('#project-visible').checked = item?.showInProjects !== false;
     } else {
       $('#entry-project').replaceChildren(...projects.map(project => new Option(project.name, project.id)));
@@ -80,6 +101,7 @@
       const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
       for (const field of ['date', 'title', 'summary', 'body']) setValue('entry-' + field, item?.[field] || (field === 'date' ? today : ''));
     }
+    updateDescriptionCount(); updateSaveLabel();
     editor.showModal();
   }
   function validUrl(value) { if (!value) return true; try { return new URL(value).protocol === 'https:'; } catch { return false; } }
@@ -108,7 +130,7 @@
       entries.sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id));
       render(); editor.close(); message(saved.isPublished ? (window.WORKSPACE_CONFIG.useDatabase ? '저장했습니다. 공개 사이트에 반영됩니다.' : '저장했습니다. 공개 사이트 연결 확인이 끝나면 반영됩니다.') : '초안으로 저장했습니다. 방문자에게는 보이지 않습니다.');
     } catch (error) { $('#editor-error').textContent = errorText(error); $('#editor-error').hidden = false; }
-    finally { busy = false; $('#save-item').disabled = false; $('#save-item').textContent = '저장'; editor.querySelectorAll('.close-editor').forEach(button => { button.disabled = false; }); }
+    finally { busy = false; $('#save-item').disabled = false; updateSaveLabel(); editor.querySelectorAll('.close-editor').forEach(button => { button.disabled = false; }); }
   });
   editor.querySelectorAll('.close-editor').forEach(button => button.addEventListener('click', () => { if (!busy) editor.close(); }));
   editor.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
@@ -132,6 +154,9 @@
     finally { busy = false; $('#confirm-delete').disabled = false; $('#cancel-delete').disabled = false; }
   });
   $('#new-project').addEventListener('click', () => openEditor('project'));
+  $('#open-drafts').addEventListener('click', () => { activateTab($('#manage-drafts')); $('#manage-drafts').focus(); });
+  $('#new-draft-project').addEventListener('click', () => openEditor('project'));
+  $('#new-draft-entry').addEventListener('click', () => openEditor('entry'));
   $('#new-entry').addEventListener('click', () => openEditor('entry'));
   $('#entry-project-filter').addEventListener('change', render);
   function showLogin() { $('#recovery-panel').hidden = true; canEdit = false; projects = []; entries = []; render(); $('#dashboard').hidden = true; $('#login-panel').hidden = false; $('#logout').hidden = true; }
