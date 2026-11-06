@@ -134,7 +134,7 @@
   $('#new-project').addEventListener('click', () => openEditor('project'));
   $('#new-entry').addEventListener('click', () => openEditor('entry'));
   $('#entry-project-filter').addEventListener('change', render);
-  function showLogin() { canEdit = false; projects = []; entries = []; render(); $('#dashboard').hidden = true; $('#login-panel').hidden = false; $('#logout').hidden = true; }
+  function showLogin() { $('#recovery-panel').hidden = true; canEdit = false; projects = []; entries = []; render(); $('#dashboard').hidden = true; $('#login-panel').hidden = false; $('#logout').hidden = true; }
   async function loadDashboard() {
     const user = await api.verifyAdmin();
     if (!user) { showLogin(); return; }
@@ -148,11 +148,40 @@
     catch (error) { message(errorText(error), true); showLogin(); }
     finally { button.disabled = false; }
   });
+  $('#request-reset').addEventListener('click', async () => {
+    const email = $('#login-email');
+    if (!email.reportValidity()) { email.focus(); return; }
+    const button = $('#request-reset'); button.disabled = true;
+    message('재설정 이메일을 요청하고 있습니다…');
+    try {
+      await api.sendPasswordReset(email.value.trim());
+      message('등록된 계정이라면 재설정 이메일이 발송됩니다. 메일의 링크에서 새 비밀번호를 정해 주세요. 스팸함도 확인해 주세요.');
+    } catch (error) { message(errorText(error), true); }
+    finally { button.disabled = false; }
+  });
+  $('#recovery-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = $('#new-password').value;
+    if (password !== $('#confirm-password').value) { message('새 비밀번호와 확인 입력이 서로 다릅니다.', true); return; }
+    if (!password.trim()) { message('공백으로만 된 비밀번호는 사용할 수 없습니다.', true); return; }
+    const button = event.submitter; button.disabled = true; message('비밀번호를 변경하고 있습니다…');
+    try {
+      await api.updatePassword(password);
+      $('#recovery-form').reset(); $('#login-password').value = '';
+      showLogin(); message('비밀번호를 변경했습니다. 새 비밀번호로 로그인해 주세요.');
+    } catch (error) { message(errorText(error), true); }
+    finally { button.disabled = false; }
+  });
   $('#logout').addEventListener('click', async () => {
     $('#logout').disabled = true;
     try { await api.logout(); message('로그아웃했습니다.'); }
     catch { message('이 브라우저에서 로그아웃했습니다. 서버 연결은 확인하지 못했습니다.', true); }
     finally { $('#logout').disabled = false; showLogin(); }
+  });
+  // 이메일 링크를 이미 열린 관리자 탭으로 열어도 복구 화면을 초기화합니다.
+  window.addEventListener('hashchange', () => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    if (hash.get('type') === 'recovery' || hash.has('error') || hash.has('error_code')) window.location.reload();
   });
   if (!api.configured || api.configurationError) {
     projects = window.projects.map(project => ({ ...project, isPublished: true }));
@@ -160,7 +189,15 @@
     $('#setup-panel').hidden = false; $('#dashboard').hidden = false; render();
     if (api.configurationError) message(api.configurationError, true);
   } else {
-    message('관리자 계정을 확인하고 있습니다…');
-    loadDashboard().then(() => message('')).catch(error => { showLogin(); message(errorText(error), true); });
+    try {
+      if (api.consumeRecoveryLink()) {
+        message('재설정 링크를 확인하고 있습니다…');
+        api.verifyRecovery().then(() => { $('#login-panel').hidden = true; $('#dashboard').hidden = true; $('#recovery-panel').hidden = false; message(''); $('#new-password').focus(); })
+          .catch(error => { showLogin(); message(errorText(error), true); });
+      } else {
+        message('관리자 계정을 확인하고 있습니다…');
+        loadDashboard().then(() => message('')).catch(error => { showLogin(); message(errorText(error), true); });
+      }
+    } catch (error) { showLogin(); message(errorText(error), true); }
   }
 })();

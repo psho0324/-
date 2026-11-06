@@ -37,8 +37,16 @@
       try { data = JSON.parse(text); } catch { /* Use a safe status message for non-JSON responses. */ }
     }
     if (!response.ok) {
-      const authMessage = data?.error_code === 'invalid_credentials' ? '이메일 또는 비밀번호가 올바르지 않습니다.' : data?.error_code === 'email_not_confirmed' ? '이메일 확인이 필요합니다. Supabase에서 관리자 계정의 이메일 확인 상태를 확인해 주세요.' : '';
-      const error = new Error(authMessage || (response.status === 401 ? '로그인이 만료되었거나 이메일·비밀번호가 올바르지 않습니다.' : response.status === 403 ? '관리 권한이 없습니다. 계정 권한을 확인해 주세요.' : response.status === 409 ? '연결된 제작 기록이 있거나 같은 ID가 이미 있습니다. 항목을 확인해 주세요.' : '요청을 처리하지 못했습니다. 연결 설정과 입력 내용을 확인하고 다시 시도해 주세요.'));
+      const authCode = data?.error_code || data?.code;
+      const authMessages = {
+        invalid_credentials: '이메일 또는 비밀번호가 올바르지 않습니다. 계정을 만들 때 정한 비밀번호를 사용하거나 아래에서 재설정해 주세요.',
+        email_not_confirmed: '이메일 확인이 필요합니다. Supabase에서 관리자 계정의 이메일 확인 상태를 확인해 주세요.',
+        over_email_send_rate_limit: '이메일 요청이 너무 잦습니다. 잠시 기다린 뒤 다시 시도해 주세요.',
+        over_request_rate_limit: '로그인 요청이 너무 잦습니다. 잠시 기다린 뒤 다시 시도해 주세요.',
+        weak_password: '더 강한 비밀번호를 입력해 주세요. Supabase의 비밀번호 규칙을 확인해 주세요.',
+        same_password: '이전과 다른 새 비밀번호를 입력해 주세요.'
+      };
+      const error = new Error(authMessages[authCode] || (response.status === 401 ? (path.startsWith('/auth/v1/token?grant_type=password') ? '로그인 연결 정보를 확인하지 못했습니다. 사이트의 공개 API 키 설정을 확인해 주세요.' : '로그인이 만료되었습니다. 다시 로그인해 주세요.') : response.status === 403 ? '관리 권한이 없거나 이메일 인증이 필요합니다. 계정 상태를 확인해 주세요.' : response.status === 409 ? '연결된 제작 기록이 있거나 같은 ID가 이미 있습니다. 항목을 확인해 주세요.' : '요청을 처리하지 못했습니다. 연결 설정과 입력 내용을 확인하고 다시 시도해 주세요.'));
       error.status = response.status;
       error.code = data?.code;
       throw error;
@@ -50,7 +58,7 @@
     if (!current) return null;
     if (current.expires_at * 1000 > Date.now() + 60000) return current;
     if (!refreshing) refreshing = request('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: current.refresh_token } })
-      .then(data => { setSession({ ...data, expires_at: data.expires_at || Math.floor(Date.now() / 1000) + data.expires_in }); return current; })
+      .then(data => { setSession({ ...data, recovery: Boolean(current?.recovery), expires_at: data.expires_at || Math.floor(Date.now() / 1000) + data.expires_in }); return current; })
       .catch(error => { setSession(null); throw error; }).finally(() => { refreshing = null; });
     return refreshing;
   }
@@ -77,6 +85,35 @@
     async login(email, password) {
       const data = await request('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
       setSession({ ...data, expires_at: data.expires_at || Math.floor(Date.now() / 1000) + data.expires_in });
+    },
+    async sendPasswordReset(email) {
+      const redirect = new URL('admin.html', window.location.href);
+      await request('/auth/v1/recover?redirect_to=' + encodeURIComponent(redirect.href), { method: 'POST', body: { email } });
+    },
+    consumeRecoveryLink() {
+      const hash = new URLSearchParams(window.location.hash.slice(1));
+      if (hash.has('error') || hash.has('error_code')) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        setSession(null);
+        throw new Error('비밀번호 재설정 링크가 만료되었거나 유효하지 않습니다. 재설정 이메일을 다시 요청해 주세요.');
+      }
+      if (hash.get('type') === 'recovery') {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        if (!hash.get('access_token') || !hash.get('refresh_token')) {
+          setSession(null);
+          throw new Error('비밀번호 재설정 링크가 올바르지 않습니다. 이메일을 다시 요청해 주세요.');
+        }
+        setSession({ access_token: hash.get('access_token'), refresh_token: hash.get('refresh_token'), expires_at: Math.floor(Date.now() / 1000) + Math.min(Number(hash.get('expires_in')) || 3600, 86400), recovery: true });
+      }
+      return Boolean(current?.recovery);
+    },
+    async verifyRecovery() { await authorized('/auth/v1/user'); },
+    async updatePassword(password) {
+      if (!current?.recovery) throw new Error('이메일의 비밀번호 재설정 링크로 다시 접속해 주세요.');
+      await authorized('/auth/v1/user', { method: 'PUT', body: { password } });
+      try { await authorized('/auth/v1/logout', { method: 'POST' }); }
+      catch { /* The password was updated; always discard the local recovery session. */ }
+      finally { setSession(null); }
     },
     async logout() {
       try { if (current) await authorized('/auth/v1/logout', { method: 'POST' }); }

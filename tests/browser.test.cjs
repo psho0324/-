@@ -14,6 +14,8 @@ const state = {
 };
 let nextId = 4, failNextSave = false, refreshCount = 0;
 const errors = [];
+const recoveryRequests = [];
+let ownerPassword = "test-password", passwordUpdates = 0;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const file = path.resolve(root, '.' + (url.pathname === '/' ? '/index.html' : url.pathname));
@@ -29,10 +31,15 @@ async function apiRoute(route) {
   const reply = (status, body) => route.fulfill({ status, contentType:'application/json', body:body === undefined ? '' : JSON.stringify(body) });
   if (url.pathname === '/auth/v1/token') {
     if (url.searchParams.get('grant_type') === 'refresh_token') { refreshCount++; return reply(200, { access_token:'test-admin', refresh_token:'test-refresh', expires_in:3600, user:{id:'owner',email:'owner@example.test'} }); }
-    if (payload.password !== 'test-password') return reply(400, {message:'invalid credentials'});
+    if (payload.password !== (payload.email === 'owner@example.test' ? ownerPassword : 'test-password')) return reply(400, {error_code:'invalid_credentials',msg:'Invalid login credentials'});
     return reply(200, {access_token:payload.email === 'owner@example.test' ? 'test-admin' : 'test-non-admin',refresh_token:'test-refresh',expires_in:3600,user:{id:payload.email === 'owner@example.test' ? 'owner' : 'other',email:payload.email}});
   }
-  if (url.pathname === '/auth/v1/user') return reply(200,{id:admin ? 'owner':'other',email:admin ? 'owner@example.test':'other@example.test'});
+  if (url.pathname === '/auth/v1/recover') { recoveryRequests.push({email:payload.email,redirect:url.searchParams.get('redirect_to')}); return reply(200,{}); }
+  if (url.pathname === '/auth/v1/user') {
+    if (!admin && token !== 'Bearer test-non-admin') return reply(401,{error_code:'bad_jwt'});
+    if (method === 'PUT') { ownerPassword=payload.password; passwordUpdates++; }
+    return reply(200,{id:admin ? 'owner':'other',email:admin ? 'owner@example.test':'other@example.test'});
+  }
   if (url.pathname === '/auth/v1/logout') return reply(204);
   if (url.pathname === '/rest/v1/site_admins') return reply(200, admin ? [{user_id:'owner'}] : []);
   const type = url.pathname === '/rest/v1/projects' ? 'projects' : 'entries';
@@ -64,7 +71,7 @@ async function makeContext(browser, base, configured) {
 async function login(page, base, email = 'owner@example.test') {
   await page.goto(base + '/admin.html');
   await page.locator('#login-email').fill(email);
-  await page.locator('#login-password').fill('test-password');
+  await page.locator('#login-password').fill(email === 'owner@example.test' ? ownerPassword : 'test-password');
   await page.getByRole('button',{name:'로그인',exact:true}).click();
 }
 (async()=>{
@@ -83,6 +90,31 @@ async function login(page, base, email = 'owner@example.test') {
     const nonAdmin = await makeContext(browser,base,true); const forbidden = await nonAdmin.newPage();
     await login(forbidden,base,'other@example.test'); await forbidden.locator('#notice.error').waitFor();
     assert(!await forbidden.locator('#dashboard').isVisible()); assert(await forbidden.locator('#login-panel').isVisible()); await nonAdmin.close();
+    const recoveryContext = await makeContext(browser,base,true); const recovery = await recoveryContext.newPage();
+    await recovery.goto(base+'/admin.html'); await recovery.locator('#login-panel').waitFor();
+    await recovery.locator('#login-email').fill('owner@example.test'); await recovery.locator('#login-password').fill('incorrect');
+    await recovery.getByRole('button',{name:'로그인',exact:true}).click(); await recovery.locator('#notice.error').waitFor();
+    assert.match(await recovery.locator('#notice').textContent(),/이메일 또는 비밀번호/);
+    await recovery.locator('#request-reset').click(); await recovery.getByText('등록된 계정이라면 재설정 이메일이 발송됩니다.',{exact:false}).waitFor();
+    assert.equal(recoveryRequests.length,1); assert.equal(recoveryRequests[0].redirect,base+'/admin.html');
+    await recovery.goto(base+'/admin.html#access_token=test-admin&refresh_token=test-refresh&type=recovery&expires_in=3600');
+    await recovery.locator('#recovery-panel').waitFor(); assert.equal(new URL(recovery.url()).hash,'');
+    assert(!await recovery.locator('#dashboard').isVisible());
+    await recovery.reload(); await recovery.locator('#recovery-panel').waitFor();
+    await recovery.locator('#new-password').fill('new-test-password'); await recovery.locator('#confirm-password').fill('mismatched');
+    await recovery.getByRole('button',{name:'비밀번호 변경',exact:true}).click(); await recovery.locator('#notice.error').waitFor();
+    assert.equal(passwordUpdates,0);
+    await recovery.locator('#confirm-password').fill('new-test-password');
+    await recovery.getByRole('button',{name:'비밀번호 변경',exact:true}).click(); await recovery.locator('#login-panel').waitFor();
+    assert.equal(passwordUpdates,1); assert.equal(ownerPassword,'new-test-password');
+    assert.equal(await recovery.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
+    await recovery.goto(base+'/admin.html#error=access_denied&error_code=otp_expired');
+    await recovery.locator('#notice.error').waitFor(); assert.equal(new URL(recovery.url()).hash,'');
+    assert.match(await recovery.locator('#notice').textContent(),/만료/); assert(!await recovery.locator('#recovery-panel').isVisible());
+    await recovery.goto(base+'/admin.html#access_token=invalid&refresh_token=invalid&type=recovery');
+    await recovery.locator('#notice.error').waitFor(); assert(!await recovery.locator('#recovery-panel').isVisible());
+    assert.equal(await recovery.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
+    await recoveryContext.close();
     const owner = await makeContext(browser,base,true); const page = await owner.newPage();
     await page.goto(base+'/admin.html'); await page.locator('#login-panel').waitFor();
     await login(page,base); await page.locator('#dashboard').waitFor(); assert.equal(await page.locator('#project-list .admin-item').count(),2);
@@ -132,7 +164,7 @@ async function login(page, base, email = 'owner@example.test') {
     assert.equal(await page.evaluate(()=>sessionStorage.getItem('wanderer-admin-session-v1')),null);
     await page.reload(); await page.locator('#login-panel').waitFor(); assert(!await page.locator('#dashboard').isVisible());
     assert.deepEqual(errors,[]);
-    console.log('PASS: disconnected read-only preview; login and denied non-admin; project/record CRUD; failed-save input retention; HTTPS validation; draft publication; public refresh; parent-draft hiding; FK UI guard; safe text rendering; session refresh/logout; mobile layouts. Auth/API simulated; production Supabase not tested.');
+    console.log('PASS: disconnected read-only preview; login and denied non-admin; project/record CRUD; failed-save input retention; HTTPS validation; draft publication; public refresh; parent-draft hiding; FK UI guard; safe text rendering; session refresh/logout; mobile layouts. Password-recovery email request, token removal, reload, mismatch, password update, expired/invalid links verified. Auth/API simulated; production Supabase not tested.');
     await owner.close(); await visitor.close();
   } finally { if(browser)await browser.close(); await new Promise(resolve=>server.close(resolve)); }
 })().catch(error=>{console.error(error);process.exitCode=1;});
