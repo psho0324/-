@@ -1,3 +1,17 @@
+async function initializeWorkspace() {
+const sourceNotice = document.querySelector('#source-notice');
+if (window.WorkspaceBackend.configured && window.WORKSPACE_CONFIG.useDatabase === true) {
+  try {
+    const data = await window.WorkspaceBackend.load();
+    window.projects = data.projects;
+    window.journalEntries = data.entries;
+  } catch {
+    window.projects = [];
+    window.journalEntries = [];
+    sourceNotice.hidden = false;
+    sourceNotice.textContent = '프로젝트와 기록을 불러오지 못했습니다. 잠시 후 새로고침해 주세요.';
+  }
+}
 const grid = document.querySelector('#project-grid');
 const dialog = document.querySelector('#project-dialog');
 const filters = [...document.querySelectorAll('[data-filter]')];
@@ -11,7 +25,15 @@ function render(filter = 'all') {
   for (const project of visible) {
     const card = document.createElement('article');
     card.className = 'project-card';
-    card.innerHTML = (project.id === 'calendar' ? calendarArt : '<div class="workspace-art" aria-hidden="true"><span>WANDERER’S WORKSPACE</span><strong>작은 시작을<br>모으는 곳.</strong><span>떠돌이의 작업실 ↗</span></div>') + '<div class="card-body"><div class="card-meta"><span class="category"></span><span class="status"></span></div><h3></h3><p class="description"></p><div class="tags"></div><div class="card-action"></div></div>';
+    card.innerHTML = (project.id === 'calendar' ? calendarArt : '<div class="workspace-art" aria-hidden="true"><span>A WORK IN PROGRESS</span><strong>새로운 시작,<br>하나의 프로젝트.</strong><span>BUILD · TRY · LEARN</span></div>') + '<div class="card-body"><div class="card-meta"><span class="category"></span><span class="status"></span></div><h3></h3><p class="description"></p><div class="tags"></div><div class="card-action"></div></div>';
+    if (/^https:\/\//.test(project.imageUrl || '')) {
+      const image = document.createElement('img');
+      image.className = 'project-image'; image.alt = project.name + ' 대표 이미지';
+      image.src = project.imageUrl; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer';
+      image.addEventListener('load', () => { card.querySelector('.calendar-art, .workspace-art').hidden = true; });
+      image.addEventListener('error', () => { image.hidden = true; });
+      card.prepend(image);
+    }
     card.querySelector('.category').textContent = project.category;
     card.querySelector('h3').textContent = project.name;
     card.querySelector('.description').textContent = project.description;
@@ -129,3 +151,6 @@ function renderJournal(projectId = 'all') {
   }
 }
 renderJournal();
+
+}
+initializeWorkspace().catch(() => { const notice = document.querySelector("#source-notice"); notice.hidden = false; notice.textContent = "화면을 불러오지 못했습니다. 새로고침해 주세요."; });

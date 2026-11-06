@@ -1,6 +1,6 @@
 # 작업실
 
-앱과 프로젝트를 소개하는 공개 포트폴리오입니다. 별도의 설치나 API 키가 필요하지 않은 HTML, CSS, JavaScript 사이트입니다.
+앱과 프로젝트를 소개하는 공개 포트폴리오입니다. HTML, CSS, JavaScript로 만든 사이트입니다. 기본 공개 화면은 설치 없이 실행할 수 있고, 관리자 기능은 Supabase에 연결합니다.
 
 ## 실행
 
@@ -22,3 +22,26 @@ python3 -m http.server 3000 --bind 0.0.0.0
 ## 제작 기록 추가
 
 `journal.js`의 `journalEntries`에 기록을 추가합니다. `projectId`는 `projects.js`의 프로젝트 `id`와 같아야 합니다. `id`는 고유한 숫자, `date`는 `YYYY-MM-DD` 형식입니다. 제목(`title`), 요약(`summary`), 펼쳐 볼 본문(`body`)을 작성하면 전체 기록과 해당 프로젝트 필터에 자동으로 표시됩니다. 프로젝트 필터는 프로젝트 목록에서 자동 생성되며 기록이 없어도 표시됩니다.
+
+
+## 관리자 화면
+
+`admin.html`에서 프로젝트와 제작 기록을 관리합니다. 최초 연결은 [SETUP.md](SETUP.md)를 따라 진행합니다. Supabase를 연결하기 전에는 공개 화면의 기존 내용을 유지하며, 관리자 저장 기능에는 실제 로그인과 데이터베이스 권한이 필요합니다. 대표 이미지는 HTTPS 이미지 주소를 사용합니다.
+
+코드나 설정을 수정한 뒤에는 다음 명령으로 정적 파일의 버전 주소를 갱신하세요.
+
+```sh
+python3 scripts/version-assets.py
+```
+
+## 검증
+
+별도 임시 디렉터리에 테스트 의존성을 설치해 실행할 수 있습니다. 앱 실행에는 이 의존성이 필요하지 않습니다.
+
+```sh
+npm install --prefix /tmp/wanderer-tests --no-audit --no-fund --ignore-scripts @electric-sql/pglite@0.5.15 playwright
+NODE_PATH=/tmp/wanderer-tests/node_modules node tests/database.test.cjs
+NODE_PATH=/tmp/wanderer-tests/node_modules CHROMIUM_EXECUTABLE=/usr/bin/chromium node tests/browser.test.cjs
+```
+
+브라우저 테스트에는 시스템 Chromium이 필요합니다. 데이터베이스 테스트는 로컬 PostgreSQL 호환 엔진에서 RLS를 검증합니다. 브라우저 테스트는 Supabase 인증/API 응답을 모의 처리하며 실제 서비스 연결 검증을 대체하지 않습니다. 실제 연결 후에는 SETUP.md의 공개·초안·관리자 로그인 확인을 완료해야 합니다.
