@@ -18,3 +18,7 @@ python3 -m http.server 3000 --bind 0.0.0.0
 ## GitHub Pages로 공개하기
 
 코드를 GitHub에 올린 다음 저장소 Settings → Pages에서 Deploy from a branch, main 브랜치, /(root)를 선택해 저장합니다. 이 작업은 별도의 공개 배포 단계입니다.
+
+## 제작 기록 추가
+
+`journal.js`의 `journalEntries`에 기록을 추가합니다. `projectId`는 `projects.js`의 프로젝트 `id`와 같아야 합니다. `id`는 고유한 숫자, `date`는 `YYYY-MM-DD` 형식입니다. 제목(`title`), 요약(`summary`), 펼쳐 볼 본문(`body`)을 작성하면 전체 기록과 해당 프로젝트 필터에 자동으로 표시됩니다. 프로젝트 필터는 프로젝트 목록에서 자동 생성되며 기록이 없어도 표시됩니다.

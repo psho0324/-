@@ -10,7 +10,7 @@ function render(filter = 'all') {
   for (const project of visible) {
     const card = document.createElement('article');
     card.className = 'project-card';
-    card.innerHTML = calendarArt + '<div class="card-body"><div class="card-meta"><span class="category"></span><span class="status"></span></div><h3></h3><p class="description"></p><div class="tags"></div><div class="card-action"></div></div>';
+    card.innerHTML = (project.id === 'calendar' ? calendarArt : '<div class="workspace-art" aria-hidden="true"><span>WANDERER’S WORKSPACE</span><strong>작은 시작을<br>모으는 곳.</strong><span>떠돌이의 작업실 ↗</span></div>') + '<div class="card-body"><div class="card-meta"><span class="category"></span><span class="status"></span></div><h3></h3><p class="description"></p><div class="tags"></div><div class="card-action"></div></div>';
     card.querySelector('.category').textContent = project.category;
     card.querySelector('h3').textContent = project.name;
     card.querySelector('.description').textContent = project.description;
@@ -18,7 +18,8 @@ function render(filter = 'all') {
     for (const tag of project.tags) {
       const el = document.createElement('span'); el.textContent = tag; card.querySelector('.tags').append(el);
     }
-    const link = document.createElement(project.url ? 'a' : 'button');
+    const hasUrl = /^https?:\/\//.test(project.url || '');
+    const link = document.createElement(hasUrl ? 'a' : 'button');
     if (project.url && /^https?:\/\//.test(project.url)) {
       link.href = project.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
       link.textContent = '앱 사용해 보기 ↗';
@@ -31,7 +32,18 @@ function render(filter = 'all') {
         dialog.showModal();
       });
     }
-    card.querySelector('.card-action').append(link); grid.append(card);
+    const journalButton = document.createElement('button');
+    journalButton.type = 'button';
+    journalButton.className = 'project-journal-link';
+    journalButton.textContent = '제작 기록 ↗';
+    journalButton.setAttribute('aria-label', project.name + ' 제작 기록');
+    journalButton.addEventListener('click', () => {
+      renderJournal(project.id);
+      selectCategory(document.querySelector('#tab-journal'));
+      document.querySelector('#tab-journal').focus();
+      document.querySelector('#projects').scrollIntoView({ block: 'start' });
+    });
+    card.querySelector('.card-action').append(link, journalButton); grid.append(card);
   }
   for (const button of filters) {
     const selected = button.dataset.filter === filter;
@@ -70,3 +82,49 @@ categoryTabs.forEach((tab, index) => {
     categoryTabs[next].focus();
   });
 });
+
+
+// 각 기록은 projectId로 프로젝트에 연결됩니다.
+const journalFilterGroup = document.querySelector('#journal-filters');
+const journalList = document.querySelector('#journal-list');
+for (const item of [{ id: 'all', name: '전체' }, ...projects]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.journalFilter = item.id;
+  button.textContent = item.name;
+  const count = document.createElement('span');
+  count.textContent = window.journalEntries.filter(entry => item.id === 'all' || entry.projectId === item.id).length;
+  button.append(count);
+  button.addEventListener('click', () => renderJournal(item.id));
+  journalFilterGroup.append(button);
+}
+function renderJournal(projectId = 'all') {
+  const entries = window.journalEntries
+    .filter(entry => projectId === 'all' || entry.projectId === projectId)
+    .slice().sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  for (const button of journalFilterGroup.querySelectorAll('button')) {
+    const selected = button.dataset.journalFilter === projectId;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  journalList.replaceChildren();
+  journalList.hidden = entries.length === 0;
+  document.querySelector('#journal-empty').hidden = entries.length > 0;
+  const name = projects.find(project => project.id === projectId)?.name || '전체 프로젝트';
+  document.querySelector('#journal-empty-title').textContent = name + '의 첫 이야기를 기다리는 중';
+  document.querySelector('#journal-result').textContent = name + ' · ' + entries.length + '개의 기록';
+  for (const entry of entries) {
+    const article = document.createElement('article');
+    article.className = 'journal-entry';
+    article.innerHTML = '<time class="journal-date"></time><div class="journal-content"><span class="entry-label"></span><h3></h3><p class="entry-summary"></p><details><summary>자세히 보기</summary><p class="entry-body"></p></details></div>';
+    const time = article.querySelector('time');
+    time.dateTime = entry.date;
+    time.textContent = entry.date.replaceAll('-', '.');
+    article.querySelector('.entry-label').textContent = projects.find(project => project.id === entry.projectId)?.name || '프로젝트';
+    article.querySelector('h3').textContent = entry.title;
+    article.querySelector('.entry-summary').textContent = entry.summary;
+    article.querySelector('.entry-body').textContent = entry.body;
+    journalList.append(article);
+  }
+}
+renderJournal();

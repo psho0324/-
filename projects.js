@@ -3,6 +3,16 @@
 // url: 공개된 앱 주소. 아직 없으면 빈 문자열로 유지하세요.
 window.projects = [
   {
+    id: "workspace",
+    name: "떠돌이의 작업실",
+    category: "WEBSITE",
+    description: "만들고 있는 앱과 제작 과정, 다음 아이디어를 모은 공개 포트폴리오입니다.",
+    status: "live",
+    tags: ["포트폴리오", "제작 기록"],
+    note: "公開中のホームページです。プロジェクトと제작 기록、次の実験をカテゴリー別に紹介します。",
+    url: "https://psho0324.github.io/-/"
+  },
+  {
     id: "calendar",
     name: "캘린더 앱",
     category: "PRODUCTIVITY",

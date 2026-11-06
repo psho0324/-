@@ -23,10 +23,10 @@
 </div>
 <div id="panel-journal" role="tabpanel" aria-labelledby="tab-journal" tabindex="0" hidden>
 <div class="panel-heading"><h3>만들면서 남긴 이야기</h3><p>작은 시작과 바뀐 점을 기록합니다.</p></div>
-<div class="journal-list">
-<article class="journal-entry"><span class="journal-number">02</span><div><span class="entry-label">작업실 · 업데이트</span><h3>각자의 자리가 있는 작업실로</h3><p>떠돌이라는 이름을 달고, 프로젝트 · 제작 기록 · 다음 실험으로 공간을 나눴습니다. 모든 앱을 같은 비중으로 소개합니다.</p></div><span class="entry-mark" aria-hidden="true">↗</span></article>
-<article class="journal-entry"><span class="journal-number">01</span><div><span class="entry-label">작업실 · 첫 시작</span><h3>작은 작업실, 처음 문을 열다</h3><p>직접 만드는 앱과 프로젝트를 모아 둘 홈페이지를 만들고 공개했습니다. 첫 프로젝트로 개발 중인 캘린더 앱을 등록했습니다.</p></div><span class="entry-mark" aria-hidden="true">↗</span></article>
-</div>
+<div class="filters journal-filters" id="journal-filters" role="group" aria-label="제작 기록 프로젝트 필터"></div>
+<p class="journal-result" id="journal-result" role="status"></p>
+<div class="journal-list" id="journal-list"></div>
+<div class="journal-empty" id="journal-empty" hidden><span aria-hidden="true">≡</span><h3 id="journal-empty-title"></h3><p>아직 남긴 제작 기록이 없어요.<br>새로운 소식이 생기면 이곳에 차곡차곡 기록할게요.</p></div>
 </div>
 <div id="panel-ideas" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0" hidden>
 <div class="panel-heading"><h3>다음에는 무엇을 만들어 볼까?</h3><p>아직 시작하지 않은 아이디어도, 시작을 기다리는 실험도.</p></div>
@@ -37,5 +37,5 @@
 </main>
 <footer class="wrap"><a class="brand" href="#">떠돌이의 작업실<span class="brand-dot">.</span></a><span>작은 시작들을 모아, 나만의 것을 만듭니다.</span><a href="#">맨 위로 ↑</a></footer>
 <dialog id="project-dialog"><button class="close" aria-label="닫기">×</button><span class="eyebrow muted">PROJECT NOTES</span><h2 id="dialog-title"></h2><p id="dialog-description"></p><h3>지금의 상태</h3><p id="dialog-note"></p><p class="dialog-foot">앱이 준비되면 이곳에 실행 링크를 공개할게요.</p></dialog>
-<script src="projects.js"></script><script src="app.js"></script>
+<script src="projects.js"></script><script src="journal.js"></script><script src="app.js"></script>
 </body></html>
