@@ -204,6 +204,22 @@ function card(page, id, list = 'project-list') {
       offlinePage = await offline.newPage();
     await offlinePage.goto(base + '/');
     await offlinePage.locator('.project-card').waitFor();
+    await offlinePage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await offlinePage.getByRole('heading', { name: '캘린더 앱 다운로드', exact: true }).waitFor();
+    assert(await offlinePage.locator('#download-pc-pending').isVisible());
+    assert(await offlinePage.locator('#download-pc-pending').isDisabled());
+    assert.equal(await offlinePage.locator('#download-pc-link').getAttribute('href'), null);
+    assert.equal(await offlinePage.locator('#download-mobile-badge').textContent(), '지원 준비 중');
+    await offlinePage.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await offlinePage
+        .locator('#download-dialog')
+        .evaluate((el) => el.scrollWidth > el.clientWidth),
+      false
+    );
+    await offlinePage.screenshot({ path: '/tmp/calendar-download-mobile.png', fullPage: true });
+    await offlinePage.keyboard.press('Escape');
+    assert(!(await offlinePage.locator('#download-dialog').isVisible()));
     await offlinePage.getByRole('tab', { name: '다음 실험' }).click();
     assert(await offlinePage.locator('#panel-ideas').isVisible());
     await offline.close();
@@ -249,6 +265,12 @@ function card(page, id, list = 'project-list') {
         'productivity, calendar, automation, personal, daily, planning, focus, workflow, tools, project'
       );
     await page.locator('#project-url').fill('https://example.test');
+    await page.locator('#download-platform').selectOption('windows');
+    await page.locator('#download-url').fill('https://example.test/releases/app.exe');
+    await page.locator('#download-version').fill('1.2.0');
+    await page.locator('#download-requirements').fill('Windows 10 이상 · 테스트용 안내');
+    await page.locator('#download-mobile-planned').check();
+
     await page.locator('#project-note').fill('Detailed description that stays reachable');
     await page.locator('#publish-state').selectOption('published');
     await save(page);
@@ -256,6 +278,21 @@ function card(page, id, list = 'project-list') {
       publicPage = await visitors.newPage();
     await publicPage.goto(base + '/');
     await publicPage.locator('.project-card').nth(1).waitFor();
+    await publicPage.getByRole('button', { name: 'Review test 다운로드', exact: true }).click();
+    await publicPage.getByRole('heading', { name: 'Review test 다운로드', exact: true }).waitFor();
+    assert.equal(await publicPage.locator('#download-pc-title').textContent(), 'Windows 버전');
+    assert.equal(await publicPage.locator('#download-version').textContent(), '버전 1.2.0');
+    assert.equal(
+      await publicPage.locator('#download-pc-link').getAttribute('href'),
+      'https://example.test/releases/app.exe'
+    );
+    assert.equal(
+      await publicPage.locator('#download-pc-link').getAttribute('rel'),
+      'noopener noreferrer'
+    );
+    assert(!(await publicPage.locator('#download-pc-pending').isVisible()));
+    await publicPage.screenshot({ path: '/tmp/download-desktop.png', fullPage: true });
+    await publicPage.locator('#download-close').click();
     const projectCard = publicPage
       .locator('.project-card')
       .filter({ has: publicPage.getByRole('heading', { name: 'Review test', exact: true }) });
@@ -266,6 +303,12 @@ function card(page, id, list = 'project-list') {
     assert.match(publicPage.url(), /project=all/);
     await publicPage.keyboard.press('Escape');
     await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    assert.equal(
+      await page.locator('#download-url').inputValue(),
+      'https://example.test/releases/app.exe'
+    );
+    assert.equal(await page.locator('#download-platform').inputValue(), 'windows');
+    assert.equal(await page.locator('#download-version').inputValue(), '1.2.0');
     await page.locator('#project-name').fill('Unreleased title');
     await page.locator('#publish-state').selectOption('draft');
     await save(page);
@@ -453,7 +496,7 @@ function card(page, id, list = 'project-list') {
     assert.equal(ownerPassword, 'new-test-password');
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, public/draft separation, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
+      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
     );
   } finally {
     if (browser) await browser.close();

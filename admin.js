@@ -212,6 +212,15 @@
           : { title: values.title, summary: values.summary, stage: values.stage || 'idea' };
     Object.entries(fields).forEach(([key, value]) => set(kind + '-' + key, value));
     $('#project-visible').checked = values.showInProjects !== false;
+    $('#download-platform').value = ['pc', 'windows', 'macos', 'linux'].includes(
+      values.downloadPlatform
+    )
+      ? values.downloadPlatform
+      : 'pc';
+    $('#download-url').value = values.downloadUrl || '';
+    $('#download-version').value = values.downloadVersion || '';
+    $('#download-requirements').value = values.downloadRequirements || '';
+    $('#download-mobile-planned').checked = values.mobilePlanned ?? item?.id === 'calendar';
     $('#project-id').disabled = !!item || kind !== 'project';
     $('#project-advanced').open = false;
     $('#publish-state').value = item?.published && !item?.draft ? 'published' : 'draft';
@@ -278,6 +287,15 @@
         throw Error('태그는 최대 10개, 각 50자 이하로 적어 주세요.');
       if (val('project-url') && !/^https:\/\//.test(val('project-url')))
         throw Error('앱 주소는 https://로 시작해야 합니다.');
+      const downloadUrl = val('download-url');
+      if (downloadUrl) {
+        let valid = false;
+        try {
+          const parsed = new URL(downloadUrl);
+          valid = parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+        } catch {}
+        if (!valid) throw Error('다운로드 주소는 https://로 시작하는 주소를 입력해 주세요.');
+      }
       const image = val('project-image');
       if (image && !image.startsWith('storage:') && !/^https:\/\//.test(image))
         throw Error('이미지 주소는 https://를 사용하거나 파일을 업로드해 주세요.');
@@ -289,6 +307,11 @@
         tags,
         note: val('project-note'),
         url: val('project-url'),
+        downloadUrl,
+        downloadPlatform: val('download-platform'),
+        downloadVersion: val('download-version'),
+        downloadRequirements: val('download-requirements'),
+        mobilePlanned: $('#download-mobile-planned').checked,
         imageUrl: image,
         sortOrder: Number(val('project-order')),
         showInProjects: $('#project-visible').checked

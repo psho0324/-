@@ -14,7 +14,7 @@
       content="떠돌이의 작업실. 직접 만드는 앱과 프로젝트, 제작 기록과 다음 실험을 모읍니다."
     />
     <title>떠돌이의 작업실 — 앱과 실험, 그리고 기록</title>
-    <link rel="stylesheet" href="style.css?v=7d4c7241c05b" />
+    <link rel="stylesheet" href="style.css?v=72423108d6a6" />
   </head>
   <body>
     <header class="nav wrap">
@@ -182,13 +182,59 @@
       <p id="dialog-note"></p>
       <div id="dialog-images"></div>
       <p class="dialog-foot" id="detail-status" role="status"></p>
+      <button id="detail-download" class="retry-button">다운로드 안내</button>
       <button id="share-project" class="retry-button">이 프로젝트 주소 복사</button>
+    </dialog>
+    <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-title">
+      <div class="download-heading">
+        <div>
+          <span class="eyebrow muted">GET THE APP</span>
+          <h2 id="download-title">앱 다운로드</h2>
+        </div>
+        <button id="download-close" class="download-close" aria-label="다운로드 창 닫기">×</button>
+      </div>
+      <p id="download-description" class="download-description"></p>
+      <p id="download-status" class="load-status" role="status"></p>
+      <div id="download-platforms" hidden>
+        <section class="download-platform">
+          <div class="platform-heading">
+            <span class="platform-icon" aria-hidden="true">PC</span>
+            <div>
+              <h3 id="download-pc-title">PC 버전</h3>
+              <span id="download-version" class="download-version" hidden></span>
+            </div>
+            <span id="download-pc-badge" class="platform-badge">준비 중</span>
+          </div>
+          <p id="download-requirements" class="download-requirements"></p>
+          <a
+            id="download-pc-link"
+            class="primary download-link"
+            target="_blank"
+            rel="noopener noreferrer"
+            hidden
+            >PC 버전 받기 ↗</a
+          ><button id="download-pc-pending" class="download-pending" disabled>
+            설치 파일 준비 중
+          </button>
+        </section>
+        <section class="download-platform mobile-platform">
+          <div class="platform-heading">
+            <span class="platform-icon" aria-hidden="true">MOBILE</span>
+            <div>
+              <h3>모바일 버전</h3>
+              <span id="download-mobile-note" class="download-requirements"></span>
+            </div>
+            <span id="download-mobile-badge" class="platform-badge">준비 중</span>
+          </div>
+        </section>
+        <p class="download-foot">업데이트 소식은 프로젝트의 제작 기록에서 확인할 수 있어요.</p>
+      </div>
     </dialog>
     <script src="projects.js?v=3f344732c155"></script>
     <script src="journal.js?v=86d122c8be2b"></script>
     <script src="config.js?v=f7c1a859c405"></script>
     <script src="backend.js?v=5a1d04cfd803"></script>
     <script src="categories.js?v=e67f927d9cc5"></script>
-    <script src="app.js?v=3c682418a112"></script>
+    <script src="app.js?v=65113efe5217"></script>
   </body>
 </html>

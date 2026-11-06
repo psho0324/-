@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
     <title>관리자 — 떠돌이의 작업실</title>
-    <link rel="stylesheet" href="admin.css?v=6f7d1df6fdb5" />
+    <link rel="stylesheet" href="admin.css?v=24155cc948f6" />
   </head>
   <body>
     <header class="admin-header">
@@ -301,6 +301,33 @@
           ><textarea id="project-note" rows="4" maxlength="10000"></textarea>
           <label for="project-url">앱 주소 <span>아직 없으면 비워 두세요.</span></label
           ><input id="project-url" type="url" placeholder="https://…" />
+          <fieldset class="download-settings">
+            <legend>다운로드 창 설정</legend>
+            <p class="small">
+              설치 파일을 공개할 때 주소를 추가하세요. 비워 두면 방문자에게 ‘설치 파일 준비 중’으로
+              표시됩니다.
+            </p>
+            <label for="download-platform">PC 운영체제</label
+            ><select id="download-platform">
+              <option value="pc">PC · 운영체제 추후 안내</option>
+              <option value="windows">Windows</option>
+              <option value="macos">macOS</option>
+              <option value="linux">Linux</option></select
+            ><label for="download-url">PC 설치 파일 또는 다운로드 페이지 주소</label
+            ><input id="download-url" type="url" placeholder="https://…" maxlength="2000" /><label
+              for="download-version"
+              >앱 버전 · 선택</label
+            ><input id="download-version" maxlength="40" placeholder="예: 1.0.0" /><label
+              for="download-requirements"
+              >지원 환경 · 선택</label
+            ><input
+              id="download-requirements"
+              maxlength="300"
+              placeholder="운영체제나 설치 방법을 짧게 안내해 주세요."
+            /><label class="check"
+              ><input id="download-mobile-planned" type="checkbox" />모바일 버전도 준비 중</label
+            >
+          </fieldset>
           <label for="project-upload">대표 이미지 업로드 · PNG/JPG/WEBP/GIF, 5MB 이하</label
           ><input
             id="project-upload"
@@ -409,6 +436,6 @@
     <script src="journal.js?v=86d122c8be2b"></script>
     <script src="backend.js?v=5a1d04cfd803"></script>
     <script src="categories.js?v=e67f927d9cc5"></script>
-    <script src="admin.js?v=88f1a50670fb"></script>
+    <script src="admin.js?v=987cc0e3ec0c"></script>
   </body>
 </html>

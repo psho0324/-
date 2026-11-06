@@ -696,3 +696,18 @@ label > span {
 .item-meta {
   color: #59664f;
 }
+
+.download-settings {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin: 25px 0;
+  padding: 8px 17px 17px;
+}
+.download-settings legend {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 8px;
+}
+.download-settings .small {
+  margin-top: 5px;
+}

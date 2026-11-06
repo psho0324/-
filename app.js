@@ -145,6 +145,85 @@
       $('#detail-status').textContent = url.href;
     }
   });
+  $('#detail-download').addEventListener('click', () => showDownload(detailId));
+  const downloadDialog = $('#download-dialog');
+  let downloadRequest = 0;
+  $('#download-close').addEventListener('click', () => downloadDialog.close());
+  downloadDialog.addEventListener('close', () => {
+    downloadRequest++;
+  });
+  downloadDialog.addEventListener('click', (event) => {
+    const r = downloadDialog.getBoundingClientRect();
+    if (
+      event.target === downloadDialog &&
+      (event.clientX < r.left ||
+        event.clientX > r.right ||
+        event.clientY < r.top ||
+        event.clientY > r.bottom)
+    )
+      downloadDialog.close();
+  });
+  function safeDownloadUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
+    } catch {
+      return '';
+    }
+  }
+  async function showDownload(id) {
+    const request = ++downloadRequest;
+    $('#download-title').textContent = '앱 다운로드';
+    $('#download-description').textContent = '';
+    $('#download-platforms').hidden = true;
+    $('#download-status').textContent = '다운로드 안내를 불러오는 중…';
+    const link = $('#download-pc-link');
+    link.hidden = true;
+    link.removeAttribute('href');
+    if (!downloadDialog.open) downloadDialog.showModal();
+    try {
+      const data =
+        (await getMode()) === 2
+          ? (await api.publicDetail('project', id))?.data
+          : (await old('project')).find((project) => project.id === id);
+      if (request !== downloadRequest) return;
+      if (!data) throw Error('현재 공개된 다운로드 안내가 없습니다.');
+      const href = safeDownloadUrl(data.downloadUrl),
+        platform =
+          { windows: 'Windows', macos: 'macOS', linux: 'Linux' }[data.downloadPlatform] || 'PC';
+      $('#download-title').textContent = data.name + ' 다운로드';
+      $('#download-description').textContent = data.description || '';
+      $('#download-pc-title').textContent = platform + ' 버전';
+      $('#download-version').hidden = !data.downloadVersion;
+      $('#download-version').textContent = data.downloadVersion
+        ? '버전 ' + data.downloadVersion
+        : '';
+      $('#download-requirements').textContent =
+        data.downloadRequirements ||
+        (href
+          ? '설치 방법은 다운로드 파일 또는 배포 페이지의 안내를 확인해 주세요.'
+          : '지원 환경과 설치 방법은 파일 공개 시 안내합니다.');
+      $('#download-pc-badge').textContent = href ? '다운로드 가능' : '준비 중';
+      $('#download-pc-badge').classList.toggle('available', !!href);
+      $('#download-pc-pending').hidden = !!href;
+      if (href) {
+        link.href = href;
+        link.textContent = platform + ' 버전 받기 ↗';
+        link.hidden = false;
+      }
+      const mobilePlanned = data.mobilePlanned ?? id === 'calendar';
+      $('#download-mobile-badge').textContent = mobilePlanned ? '지원 준비 중' : '미등록';
+      $('#download-mobile-note').textContent = mobilePlanned
+        ? '모바일에서도 사용할 수 있도록 준비하고 있어요.'
+        : '아직 모바일 설치 파일이 등록되지 않았어요.';
+      $('#download-status').textContent = '';
+      $('#download-platforms').hidden = false;
+    } catch (error) {
+      if (request === downloadRequest)
+        $('#download-status').textContent =
+          error.message || '다운로드 안내를 불러오지 못했습니다. 창을 닫았다 다시 열어 주세요.';
+    }
+  }
   function renderProjects() {
     const grid = $('#project-grid');
     grid.replaceChildren();
@@ -197,13 +276,11 @@
       (project.tags || []).forEach((tag) => tags.append(text('span', tag)));
       body.append(tags);
       const actions = text('div', '', 'card-action');
-      if (/^https:\/\//.test(project.url || '')) {
-        const a = text('a', '앱 열기 ↗');
-        a.href = project.url;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        actions.append(a);
-      }
+      const download = text('button', '다운로드 ↓');
+      download.className = 'project-download';
+      download.setAttribute('aria-label', project.name + ' 다운로드');
+      download.addEventListener('click', () => showDownload(project.id));
+      actions.append(download);
       const detail = text('button', '소개 보기');
       detail.addEventListener('click', () => showDetail(project.id));
       actions.append(detail);
