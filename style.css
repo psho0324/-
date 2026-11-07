@@ -62,7 +62,13 @@ button:focus-visible {
   color: white;
   border-radius: 7px;
   margin-right: 9px;
-  font-size: 23px;
+  line-height: 0;
+  vertical-align: middle;
+}
+.brand-icon svg {
+  display: block;
+  width: 72%;
+  height: 72%;
 }
 .brand-dot {
   color: #6e8d5b;
@@ -770,7 +776,6 @@ footer .brand {
   .brand-icon {
     width: 23px;
     height: 23px;
-    font-size: 19px;
     margin-right: 5px;
   }
   nav {
