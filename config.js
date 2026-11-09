@@ -9,7 +9,7 @@ window.WORKSPACE_CONFIG = {
   // 관리자에서 등록한 다운로드 주소가 있으면 그 설정을 우선합니다.
   desktopReleases: {
     calendar: {
-      ready: false,
+      ready: true,
       downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
       downloadPlatform: 'windows',
       downloadVersion: '0.1.0',
