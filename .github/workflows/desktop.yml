@@ -1,0 +1,94 @@
+name: Build Windows planner
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['desktop/**', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/desktop.yml']
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install locked Windows dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag must match package version v$version" }
+      - name: Run all five original test files
+        run: npm test
+      - name: Launch actual Electron and verify desktop saving
+        run: npm run test:desktop
+      - name: Build Windows NSIS installer
+        run: npm run dist:win
+      - name: Verify packaged files
+        run: npm run test:package
+      - name: Install silently and launch installed application
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'my-planner-installed'
+          $installer = Start-Process -FilePath (Resolve-Path dist/MyPlanner-Setup.exe) -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "NSIS installation failed: $($installer.ExitCode)" }
+          $env:PLANNER_EXECUTABLE = Join-Path $installDir 'MyPlanner.exe'
+          $env:PLANNER_SMOKE_LABEL = 'installed'
+          npm run test:desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Create installer checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/MyPlanner-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  MyPlanner-Setup.exe" | Set-Content -Encoding ascii dist/SHA256SUMS.txt
+      - name: Upload Windows build and verification records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-planner-windows
+          if-no-files-found: warn
+          path: |
+            desktop/dist/MyPlanner-Setup.exe
+            desktop/dist/SHA256SUMS.txt
+            desktop/test-results/**
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: windows
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: my-planner-windows
+          path: desktop-artifacts
+      - name: Publish tested installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            desktop-artifacts/dist/MyPlanner-Setup.exe \
+            desktop-artifacts/dist/SHA256SUMS.txt \
+            desktop-artifacts/test-results/installed.json \
+            --verify-tag --latest \
+            --title "내 플래너 $GITHUB_REF_NAME — Windows 테스트 버전" \
+            --notes-file desktop/RELEASE_NOTES.md

@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 플래너</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#3b82f6"/><rect x="5" y="6" width="14" height="13" rx="2" fill="#fff"/><path d="M5 8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2H5z" fill="#ef4444"/><path d="M9 14.5l2 2 4-4" stroke="#3b82f6" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>내 플래너</span>
+      </div>
+
+      <button type="button" id="quickOpen" class="quick-open"><span class="plus">+</span> 빠른 추가 <kbd>Q</kbd></button>
+      <button type="button" id="sideToggle" class="side-toggle" aria-expanded="false" aria-controls="sidebar" aria-label="검색·카테고리 열기">☰</button>
+
+      <input type="search" id="searchBox" class="search" placeholder="일정·할 일·목표 검색  ( / )" aria-label="검색" autocomplete="off">
+
+      <nav class="nav-list" aria-label="메뉴">
+        <button type="button" class="nav-item" data-nav="home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+          <span class="ni-text"><span class="ni-label">홈</span><span class="ni-desc">오늘의 현황을 한눈에</span></span>
+        </button>
+        <button type="button" class="nav-item" data-nav="calendar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          <span class="ni-text"><span class="ni-label">캘린더</span><span class="ni-desc">일정과 시간표</span></span>
+        </button>
+        <button type="button" class="nav-item" data-nav="todos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12l3 3 5-6"/></svg>
+          <span class="ni-text"><span class="ni-label">할 일</span><span class="ni-desc">작업 관리</span></span>
+          <span id="navTodoCount" class="tabcount"></span>
+        </button>
+        <button type="button" class="nav-item" data-nav="goals">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>
+          <span class="ni-text"><span class="ni-label">목표</span><span class="ni-desc">성과와 작업 진행 관리</span></span>
+          <span id="navGoalCount" class="tabcount"></span>
+        </button>
+        <button type="button" class="nav-item" data-nav="stats">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>
+          <span class="ni-text"><span class="ni-label">통계</span><span class="ni-desc">활동 기록과 분석</span></span>
+        </button>
+        <button type="button" class="nav-item" data-nav="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+          <span class="ni-text"><span class="ni-label">설정</span><span class="ni-desc">앱 환경 및 데이터 관리</span></span>
+        </button>
+      </nav>
+
+      <div class="side-cats">
+        <div class="side-cats-head">
+          <span class="grow">카테고리</span>
+          <button type="button" id="fclear" class="link-btn" hidden>필터 해제</button>
+          <button type="button" id="catNew" class="icon-btn small" aria-label="카테고리 추가" title="카테고리 추가">+</button>
+        </div>
+        <div id="sideCats" class="side-cat-list"></div>
+        <p class="side-hint muted">클릭: 켜기/끄기 · 더블클릭: 이것만 보기<br>켜고 끄는 것은 캘린더·할 일·목표에 적용돼요. 홈은 항상 전체를 보여줘요.</p>
+      </div>
+    </aside>
+
+    <div class="content">
+      <section id="page-home" class="page">
+        <div class="page-head">
+          <div>
+            <h1>홈</h1>
+            <p class="page-desc">오늘의 현황을 한눈에</p>
+          </div>
+          <span id="homeDate" class="home-date"></span>
+        </div>
+        <div id="homeBody" class="page-body"></div>
+      </section>
+
+      <section id="page-calendar" class="page" hidden>
+        <header class="topbar">
+          <div class="nav">
+            <button id="prev" class="icon-btn" aria-label="이전">‹</button>
+            <button id="today" class="btn">오늘</button>
+            <button id="next" class="icon-btn" aria-label="다음">›</button>
+            <h1 class="datepick" id="datePick">
+              <label class="dp"><select id="dp-year" aria-label="연도" title="연도 선택"></select></label>
+              <label class="dp"><select id="dp-month" aria-label="월" title="월 선택"></select></label>
+              <label class="dp"><select id="dp-day" aria-label="일" title="일 선택"></select></label>
+              <span id="subtitle" class="muted"></span>
+            </h1>
+          </div>
+          <div class="actions">
+            <span id="todayLabel" class="today-label"></span>
+            <div class="seg">
+              <button data-view="month">월</button>
+              <button data-view="week">주</button>
+              <button data-view="day">일</button>
+            </div>
+            <button id="newEvent" class="btn primary">+ 일정</button>
+          </div>
+        </header>
+        <section id="calendar" class="calendar"></section>
+      </section>
+
+      <section id="page-todos" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>할 일</h1>
+            <p class="page-desc">작업 관리</p>
+          </div>
+          <span id="todoCount" class="muted"></span>
+        </div>
+        <div class="page-body">
+          <div class="narrow">
+            <form id="todoAdd" class="todo-add" autocomplete="off">
+              <input id="todoNew" placeholder="할 일 추가 후 Enter" aria-label="새 할 일">
+              <div class="todo-add-row">
+                <input type="date" id="todoNewDue" aria-label="마감일">
+                <select id="todoNewPrio" aria-label="우선순위">
+                  <option value="0">낮음</option>
+                  <option value="1" selected>보통</option>
+                  <option value="2">높음</option>
+                </select>
+                <button type="submit" class="btn primary">추가</button>
+              </div>
+              <div class="todo-add-row">
+                <select id="todoNewCat" aria-label="카테고리"></select>
+                <select id="todoNewProj" aria-label="목표"></select>
+              </div>
+            </form>
+            <div class="filters">
+              <button data-filter="all">전체</button>
+              <button data-filter="late">밀린 일 <span id="lateTabCount" class="tabcount"></span></button>
+              <button data-filter="active">진행 중</button>
+              <button data-filter="done">완료</button>
+            </div>
+            <div id="lateBar" class="late-bar" hidden>
+              <span class="muted">날짜가 지났는데 체크하지 못한 할 일과 일정이에요. 줄마다 오늘·내일로 옮기거나 날짜를 골라 보세요.</span>
+              <button type="button" class="btn" id="lateAllBtn">모두 오늘로</button>
+            </div>
+            <div id="todoList" class="todo-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-goals" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>목표</h1>
+            <p class="page-desc">성과와 작업 진행 관리</p>
+          </div>
+          <span id="projCount" class="muted"></span>
+        </div>
+        <div class="page-body">
+          <form id="projAdd" class="todo-add narrow" autocomplete="off">
+            <input id="projNew" placeholder="이루고 싶은 목표 이름 후 Enter" aria-label="새 목표">
+            <div class="todo-add-row">
+              <input type="date" id="projNewDue" aria-label="목표일">
+              <select id="projNewCat" aria-label="카테고리"></select>
+              <button type="submit" class="btn primary">추가</button>
+            </div>
+          </form>
+          <div class="filters">
+            <button data-pfilter="active">진행 중</button>
+            <button data-pfilter="done">완료</button>
+            <button data-pfilter="all">전체</button>
+          </div>
+          <div id="projList" class="goal-grid"></div>
+        </div>
+      </section>
+
+      <section id="page-stats" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>통계</h1>
+            <p class="page-desc">활동 기록과 분석</p>
+          </div>
+          <div class="seg" id="statSeg">
+            <button type="button" data-stat="week">이번 주</button>
+            <button type="button" data-stat="month">이번 달</button>
+            <button type="button" data-stat="d30">최근 30일</button>
+          </div>
+        </div>
+        <div id="statsBody" class="page-body"></div>
+      </section>
+
+      <section id="page-settings" class="page" hidden>
+        <div class="page-head">
+          <div>
+            <h1>설정</h1>
+            <p class="page-desc">앱 환경 및 데이터 관리</p>
+          </div>
+        </div>
+        <div class="page-body">
+          <div class="settings narrow">
+            <div class="card set-card">
+              <h2>화면</h2>
+              <label class="set-row">
+                <span class="set-text"><b>한 주의 시작 요일</b><span class="muted">달력의 첫 번째 칸이 되는 요일이에요.</span></span>
+                <select id="set-weekStart">
+                  <option value="0">일요일</option>
+                  <option value="1">월요일</option>
+                </select>
+              </label>
+              <label class="set-row">
+                <span class="set-text"><b>공휴일 표시</b><span class="muted">대체공휴일 포함, 달력과 홈에 빨간 글씨로 보여요. 2035년까지 음력 명절을 지원해요.</span></span>
+                <input type="checkbox" id="set-holidays" class="switch">
+              </label>
+            </div>
+
+            <div class="card set-card">
+              <h2>알림</h2>
+              <label class="set-row">
+                <span class="set-text"><b>일정 알림 사용</b><span id="set-notify-note" class="muted">일정에 설정한 알림 시간에 데스크톱 알림이 떠요.</span></span>
+                <input type="checkbox" id="set-notify" class="switch">
+              </label>
+            </div>
+
+            <div class="card set-card">
+              <h2>실행</h2>
+              <label class="set-row">
+                <span class="set-text"><b>창을 닫아도 계속 실행</b><span class="muted">알림을 받으려면 켜 두세요. 완전히 끄려면 작업 표시줄 트레이 아이콘을 우클릭 → 종료.</span></span>
+                <input type="checkbox" id="set-keep" class="switch">
+              </label>
+              <label class="set-row">
+                <span class="set-text"><b>윈도우 시작 시 자동 실행</b><span class="muted">PC를 켜면 창 없이 트레이에서 조용히 시작해요.</span></span>
+                <input type="checkbox" id="set-autostart" class="switch">
+              </label>
+              <p id="set-sysNote" class="muted set-summary" hidden>이 항목은 설치한 앱에서만 쓸 수 있어요.</p>
+            </div>
+
+            <div class="card set-card">
+              <h2>카테고리</h2>
+              <div class="set-row">
+                <span class="set-text"><b>카테고리 관리</b><span class="muted">이름·색 변경과 삭제는 왼쪽 목록의 ✎ 버튼에서 해요.</span></span>
+                <button type="button" class="btn" id="set-catNew">+ 카테고리 추가</button>
+              </div>
+            </div>
+
+            <div class="card set-card" id="set-locationCard">
+              <h2>저장 위치 · PC 간 동기화</h2>
+              <p class="muted set-summary">OneDrive·구글 드라이브·Dropbox 같은 동기화 폴더를 고르면, 그 폴더를 쓰는 PC끼리 같은 일정이 보여요. 다른 PC에서 바뀐 내용은 몇 초 안에 자동으로 불러와요. (폰은 지원하지 않아요.)</p>
+              <p class="set-path"><span class="muted">현재 저장 위치</span> <code id="set-path">-</code></p>
+              <p id="set-pathProblem" class="set-msg err" hidden></p>
+              <div class="set-row">
+                <span id="set-folderMsg" class="set-msg" role="status"></span>
+                <span class="set-btns">
+                  <button type="button" class="btn" id="set-folderOpen">폴더 열기</button>
+                  <button type="button" class="btn" id="set-folderReset" hidden>기본 위치로</button>
+                  <button type="button" class="btn primary" id="set-folder">폴더 바꾸기…</button>
+                </span>
+              </div>
+            </div>
+
+            <div class="card set-card" id="set-autoBackupCard">
+              <h2>자동 백업</h2>
+              <p class="muted set-summary">하루에 한 번, 그날 처음 실행했을 때 자동으로 백업해요. 최근 20개를 이 PC 안에 보관하고, 복원하기 직전 상태도 따로 남겨요.</p>
+              <div id="set-backups" class="bk-list"></div>
+              <div class="set-row">
+                <span id="set-backupMsg" class="set-msg" role="status"></span>
+                <span class="set-btns">
+                  <button type="button" class="btn" id="set-backupOpen">백업 폴더 열기</button>
+                  <button type="button" class="btn primary" id="set-backupNow">지금 백업</button>
+                </span>
+              </div>
+            </div>
+
+            <div class="card set-card">
+              <h2>데이터 백업</h2>
+              <p id="set-summary" class="muted set-summary"></p>
+              <p id="set-where" class="muted set-summary"></p>
+              <div class="set-row">
+                <span class="set-text"><b>내보내기</b><span class="muted">모든 일정·할 일·목표·카테고리를 파일 하나로 저장해요.</span></span>
+                <span class="set-btns">
+                  <button type="button" class="btn primary" id="set-export">파일로 저장</button>
+                  <button type="button" class="btn" id="set-copy">내용 복사</button>
+                </span>
+              </div>
+              <textarea id="set-exportBox" class="set-box" readonly hidden aria-label="백업 내용"></textarea>
+              <div class="set-row set-import">
+                <span class="set-text"><b>가져오기</b><span class="muted">백업 파일을 고르거나 내용을 붙여넣으세요. 지금 데이터는 가져온 내용으로 바뀌어요.</span></span>
+                <span class="set-btns">
+                  <label class="btn" for="set-file">파일 선택</label>
+                  <input type="file" id="set-file" accept=".json,application/json" hidden>
+                </span>
+              </div>
+              <textarea id="set-importBox" class="set-box" placeholder="백업 내용을 여기에 붙여넣기" aria-label="가져올 백업 내용"></textarea>
+              <div class="set-row">
+                <span id="set-importMsg" class="set-msg" role="status"></span>
+                <span class="set-btns">
+                  <button type="button" class="btn" id="set-undo" hidden>가져오기 되돌리기</button>
+                  <button type="button" class="btn primary" id="set-import">가져오기</button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="saveStatus" class="save-status" data-state="idle" hidden></div>
+
+  <dialog id="eventDialog">
+    <form id="eventForm" class="dlg">
+      <h2 id="eventDialogTitle">새 일정</h2>
+      <input id="ev-title" class="title-input" placeholder="제목 추가" autocomplete="off">
+      <label class="row"><input type="checkbox" id="ev-allday"> 종일</label>
+      <label class="row" id="ev-done-row" hidden><input type="checkbox" id="ev-done"> 이 일정 완료 <span id="ev-done-date" class="muted"></span></label>
+      <div class="row">
+        <span class="lbl">시작</span>
+        <input type="date" id="ev-start-date">
+        <input type="time" id="ev-start-time">
+      </div>
+      <div class="row" id="ev-end-row">
+        <span class="lbl">종료</span>
+        <input type="date" id="ev-end-date">
+        <input type="time" id="ev-end-time">
+      </div>
+      <div class="row">
+        <span class="lbl">반복</span>
+        <select id="ev-repeat">
+          <option value="none">반복 안 함</option>
+          <option value="daily">매일</option>
+          <option value="weekly">매주</option>
+          <option value="monthly">매월</option>
+          <option value="yearly">매년</option>
+        </select>
+      </div>
+      <div class="row" id="ev-repeat-extra" hidden>
+        <span class="lbl"></span>
+        <input type="number" id="ev-interval" min="1" max="99" value="1" class="num-input">
+        <span id="ev-interval-unit">일</span><span>마다 · 반복 종료일</span>
+        <input type="date" id="ev-until">
+      </div>
+      <div class="row">
+        <span class="lbl">알림</span>
+        <select id="ev-reminder">
+          <option value="">없음</option>
+          <option value="0">시작 시각</option>
+          <option value="5">5분 전</option>
+          <option value="10">10분 전</option>
+          <option value="30">30분 전</option>
+          <option value="60">1시간 전</option>
+          <option value="1440">1일 전</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="lbl">카테고리</span>
+        <select id="ev-cat"></select>
+      </div>
+      <div class="row" id="ev-color-row">
+        <span class="lbl">색상</span>
+        <div id="ev-colors" class="colors"></div>
+      </div>
+      <textarea id="ev-memo" placeholder="메모" rows="3"></textarea>
+      <p id="ev-note" class="note" hidden></p>
+      <p id="ev-error" class="error" hidden></p>
+      <div class="dlg-actions">
+        <button type="button" id="ev-delete-one" class="btn danger" hidden>이 회차만 삭제</button>
+        <button type="button" id="ev-delete-all" class="btn danger" hidden>삭제</button>
+        <span class="spacer"></span>
+        <button type="button" id="ev-cancel" class="btn">취소</button>
+        <button type="submit" class="btn primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="todoDialog">
+    <form id="todoForm" class="dlg">
+      <h2>할 일 편집</h2>
+      <input id="td-title" class="title-input" placeholder="할 일" autocomplete="off">
+      <div class="row">
+        <span class="lbl">마감일</span>
+        <input type="date" id="td-due">
+      </div>
+      <div class="row">
+        <span class="lbl">우선순위</span>
+        <select id="td-prio">
+          <option value="0">낮음</option>
+          <option value="1">보통</option>
+          <option value="2">높음</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="lbl">카테고리</span>
+        <select id="td-cat"></select>
+      </div>
+      <div class="row">
+        <span class="lbl">목표</span>
+        <select id="td-proj"></select>
+      </div>
+      <label class="row"><input type="checkbox" id="td-done"> 완료</label>
+      <textarea id="td-memo" placeholder="메모" rows="3"></textarea>
+      <p id="td-error" class="error" hidden></p>
+      <div class="dlg-actions">
+        <button type="button" id="td-delete" class="btn danger">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" id="td-cancel" class="btn">취소</button>
+        <button type="submit" class="btn primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="projDialog">
+    <form id="projForm" class="dlg">
+      <h2>목표 편집</h2>
+      <input id="pj-title" class="title-input" placeholder="이름" autocomplete="off">
+      <div class="row">
+        <span class="lbl">목표일</span>
+        <input type="date" id="pj-due">
+      </div>
+      <div class="row">
+        <span class="lbl">카테고리</span>
+        <select id="pj-cat"></select>
+      </div>
+      <div class="row">
+        <span class="lbl">상태</span>
+        <select id="pj-status">
+          <option value="active">진행 중</option>
+          <option value="done">완료</option>
+        </select>
+      </div>
+      <textarea id="pj-memo" placeholder="메모 (목표의 이유, 완료 기준 등)" rows="3"></textarea>
+      <p id="pj-note" class="note"></p>
+      <p id="pj-error" class="error" hidden></p>
+      <div class="dlg-actions">
+        <button type="button" id="pj-delete" class="btn danger">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" id="pj-cancel" class="btn">취소</button>
+        <button type="submit" class="btn primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="quickDialog">
+    <form id="quickForm" class="dlg quick" autocomplete="off">
+      <h2>빠른 추가</h2>
+      <input id="quickInput" class="title-input" placeholder="예) 내일 오후 3시 치과 1시간 #업무" aria-label="빠른 추가 내용">
+      <div class="seg quick-seg" role="group" aria-label="종류">
+        <button type="button" data-qkind="auto">자동</button>
+        <button type="button" data-qkind="event">일정</button>
+        <button type="button" data-qkind="todo">할 일</button>
+      </div>
+      <div id="quickPreview" class="quick-preview" aria-live="polite"></div>
+      <p class="note">날짜: 오늘·내일·모레·금요일·다음주 월요일·11/20·3일 뒤 · 시간: 오후 3시·15:30·2시부터 4시까지 · 길이: 1시간·30분 · 종일 · #카테고리 · 끝에 ! (중요). 시간이 있으면 일정, 없으면 할 일로 만들어요.</p>
+      <div class="dlg-actions">
+        <button type="button" id="quickCancel" class="btn">취소</button>
+        <span class="spacer"></span>
+        <button type="submit" id="quickOk" class="btn primary">만들기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="catDialog">
+    <form id="catForm" class="dlg">
+      <h2 id="catDlgTitle">카테고리 편집</h2>
+      <input id="cat-name" class="title-input" placeholder="카테고리 이름" maxlength="20" autocomplete="off">
+      <div class="row">
+        <span class="lbl">색상</span>
+        <div id="cat-colors" class="colors"></div>
+        <input type="color" id="cat-color" class="color-input" aria-label="색상 직접 고르기" title="색상 직접 고르기">
+      </div>
+      <p class="note">이름과 색은 바로 적용돼요. 삭제하면 이 카테고리의 일정·할 일·목표는 미분류로 바뀌고, 일정은 기존 색을 그대로 유지해요.</p>
+      <div class="dlg-actions">
+        <button type="button" id="cat-delete" class="btn danger">삭제</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">완료</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="recurrence.js"></script>
+  <script src="holidays.js"></script>
+  <script src="quickadd.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

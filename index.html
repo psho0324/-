@@ -14,14 +14,24 @@
       content="떠돌이의 작업실. 직접 만드는 앱과 프로젝트, 제작 기록과 다음 실험을 모읍니다."
     />
     <title>떠돌이의 작업실 — 앱과 실험, 그리고 기록</title>
-    <link rel="stylesheet" href="style.css?v=f098d4e01ff2" />
+    <link rel="stylesheet" href="style.css?v=7828c7c4a278" />
   </head>
   <body>
     <header class="nav wrap">
       <a class="brand" href="#"
         ><span class="brand-icon" aria-hidden="true"
-          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M6 18 18 6M6 6h12v12" /></svg
-        ></span> 떠돌이의 작업실<span class="brand-dot">.</span></a
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            focusable="false"
+          >
+            <path d="M6 18 18 6M6 6h12v12" /></svg
+        ></span>
+        떠돌이의 작업실<span class="brand-dot">.</span></a
       >
       <nav aria-label="주 메뉴">
         <a href="#projects">프로젝트</a><a href="#about">소개 <span>↗</span></a>
@@ -218,6 +228,11 @@
           ><button id="download-pc-pending" class="download-pending" disabled>
             설치 파일 준비 중
           </button>
+          <p id="download-unsigned-notice" class="download-notice" hidden>
+            이 테스트 버전은 코드 서명이 없어 Windows SmartScreen의 ‘Windows의 PC 보호’ 경고와 ‘알
+            수 없는 게시자’가 표시될 수 있어요. 이 홈페이지에서 제공하는 MyPlanner-Setup.exe
+            파일인지 확인하고, 신뢰하는 경우에만 ‘추가 정보 → 실행’을 선택하세요.
+          </p>
         </section>
         <section class="download-platform mobile-platform">
           <div class="platform-heading">
@@ -234,9 +249,9 @@
     </dialog>
     <script src="projects.js?v=3f344732c155"></script>
     <script src="journal.js?v=86d122c8be2b"></script>
-    <script src="config.js?v=f7c1a859c405"></script>
+    <script src="config.js?v=79b4275fc769"></script>
     <script src="backend.js?v=5a1d04cfd803"></script>
     <script src="categories.js?v=e67f927d9cc5"></script>
-    <script src="app.js?v=65113efe5217"></script>
+    <script src="app.js?v=12617b1ee235"></script>
   </body>
 </html>

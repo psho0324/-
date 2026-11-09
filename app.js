@@ -171,6 +171,11 @@
       return '';
     }
   }
+  function officialWindowsInstaller(href) {
+    return /^https:\/\/github\.com\/psho0324\/-\/releases\/(?:latest\/download|download\/v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?)\/MyPlanner-Setup\.exe$/.test(
+      href
+    );
+  }
   async function showDownload(id) {
     const request = ++downloadRequest;
     $('#download-title').textContent = '앱 다운로드';
@@ -180,14 +185,19 @@
     const link = $('#download-pc-link');
     link.hidden = true;
     link.removeAttribute('href');
+    $('#download-unsigned-notice').hidden = true;
     if (!downloadDialog.open) downloadDialog.showModal();
     try {
-      const data =
+      let data =
         (await getMode()) === 2
           ? (await api.publicDetail('project', id))?.data
           : (await old('project')).find((project) => project.id === id);
       if (request !== downloadRequest) return;
       if (!data) throw Error('현재 공개된 다운로드 안내가 없습니다.');
+      const release = window.WORKSPACE_CONFIG?.desktopReleases?.[id];
+      // Keep CMS publication visibility and explicit download settings authoritative.
+      // A released installer can supply defaults before its URL is entered in the CMS.
+      if (!data.downloadUrl && release?.ready === true) data = { ...data, ...release };
       const href = safeDownloadUrl(data.downloadUrl),
         platform =
           { windows: 'Windows', macos: 'macOS', linux: 'Linux' }[data.downloadPlatform] || 'PC';
@@ -211,6 +221,12 @@
         link.textContent = platform + ' 버전 받기 ↗';
         link.hidden = false;
       }
+      $('#download-unsigned-notice').hidden = !(
+        id === 'calendar' &&
+        data.downloadPlatform === 'windows' &&
+        release?.unsigned !== false &&
+        officialWindowsInstaller(href)
+      );
       const mobilePlanned = data.mobilePlanned ?? id === 'calendar';
       $('#download-mobile-badge').textContent = mobilePlanned ? '지원 준비 중' : '미등록';
       $('#download-mobile-note').textContent = mobilePlanned

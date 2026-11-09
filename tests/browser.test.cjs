@@ -136,15 +136,21 @@ async function routeApi(route) {
     });
   }
 }
-async function context(configured = true) {
+async function context(configured = true, desktopReleases) {
   const context = await browser.newContext();
+  const config = configured
+    ? {
+        supabaseUrl: 'https://workspace-test.supabase.co',
+        publishableKey: 'sb_publishable_test',
+        useDatabase: true
+      }
+    : {};
+  if (desktopReleases) config.desktopReleases = desktopReleases;
   context.on('page', (page) => page.on('pageerror', (e) => errors.push(e.message)));
   await context.route('**/config.js*', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: configured
-        ? "window.WORKSPACE_CONFIG={supabaseUrl:'https://workspace-test.supabase.co',publishableKey:'sb_publishable_test',useDatabase:true}"
-        : 'window.WORKSPACE_CONFIG={}'
+      body: 'window.WORKSPACE_CONFIG=' + JSON.stringify(config)
     })
   );
   await context.route('https://workspace-test.supabase.co/**', routeApi);
@@ -200,7 +206,15 @@ function card(page, id, list = 'project-list') {
       headless: true,
       args: ['--no-sandbox']
     });
-    const offline = await context(false),
+    const calendarRelease = {
+      ready: false,
+      downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
+      downloadPlatform: 'windows',
+      downloadVersion: '0.1.0',
+      downloadRequirements: 'Windows 10/11 · 64비트',
+      unsigned: true
+    };
+    const offline = await context(false, { calendar: calendarRelease }),
       offlinePage = await offline.newPage();
     await offlinePage.goto(base + '/');
     await offlinePage.locator('.project-card').waitFor();
@@ -209,6 +223,7 @@ function card(page, id, list = 'project-list') {
     assert(await offlinePage.locator('#download-pc-pending').isVisible());
     assert(await offlinePage.locator('#download-pc-pending').isDisabled());
     assert.equal(await offlinePage.locator('#download-pc-link').getAttribute('href'), null);
+    assert(!(await offlinePage.locator('#download-unsigned-notice').isVisible()));
     assert.equal(await offlinePage.locator('#download-mobile-badge').textContent(), '지원 준비 중');
     await offlinePage.setViewportSize({ width: 390, height: 844 });
     assert.equal(
@@ -223,6 +238,61 @@ function card(page, id, list = 'project-list') {
     await offlinePage.getByRole('tab', { name: '다음 실험' }).click();
     assert(await offlinePage.locator('#panel-ideas').isVisible());
     await offline.close();
+    const released = await context(false, {
+        calendar: { ...calendarRelease, ready: true }
+      }),
+      releasedPage = await released.newPage();
+    await releasedPage.goto(base + '/');
+    await releasedPage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await releasedPage.locator('#download-pc-link').waitFor();
+    assert.equal(
+      await releasedPage.locator('#download-pc-link').getAttribute('href'),
+      calendarRelease.downloadUrl
+    );
+    assert.equal(await releasedPage.locator('#download-pc-title').textContent(), 'Windows 버전');
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.0');
+    assert(await releasedPage.locator('#download-unsigned-notice').isVisible());
+    assert.match(
+      await releasedPage.locator('#download-unsigned-notice').textContent(),
+      /SmartScreen[\s\S]*추가 정보 → 실행/
+    );
+    await releasedPage.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await releasedPage
+        .locator('#download-dialog')
+        .evaluate((el) => el.scrollWidth > el.clientWidth),
+      false
+    );
+    await releasedPage.screenshot({
+      path: '/tmp/planner-release-download-mobile.png',
+      fullPage: true
+    });
+    await releasedPage.locator('#download-close').click();
+    // Explicit administrator download settings win over release defaults, without an unrelated warning.
+    await releasedPage.evaluate(() =>
+      Object.assign(
+        window.projects.find((project) => project.id === 'calendar'),
+        {
+          downloadUrl: 'https://example.test/custom-installer.exe',
+          downloadPlatform: 'windows',
+          downloadVersion: '0.2.0',
+          downloadRequirements: 'Administrator download settings'
+        }
+      )
+    );
+    await releasedPage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await releasedPage.locator('#download-pc-link').waitFor();
+    assert.equal(
+      await releasedPage.locator('#download-pc-link').getAttribute('href'),
+      'https://example.test/custom-installer.exe'
+    );
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.2.0');
+    assert.equal(
+      await releasedPage.locator('#download-requirements').textContent(),
+      'Administrator download settings'
+    );
+    assert(!(await releasedPage.locator('#download-unsigned-notice').isVisible()));
+    await released.close();
     await db.exec('grant select on public.projects,public.journal_entries to anon,authenticated');
     const previous = await context(),
       previousPage = await previous.newPage();
@@ -291,6 +361,7 @@ function card(page, id, list = 'project-list') {
       'noopener noreferrer'
     );
     assert(!(await publicPage.locator('#download-pc-pending').isVisible()));
+    assert(!(await publicPage.locator('#download-unsigned-notice').isVisible()));
     await publicPage.screenshot({ path: '/tmp/download-desktop.png', fullPage: true });
     await publicPage.locator('#download-close').click();
     const projectCard = publicPage

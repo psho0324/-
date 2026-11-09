@@ -1155,6 +1155,16 @@ footer .admin-footer-link {
   margin: 18px 0 0;
   font-size: 13px;
 }
+.download-notice {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid #a18a52;
+  background: #f7f2e6;
+  color: #62512c;
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
 .download-pending {
   width: 100%;
   border: 1px solid #dfe4d5;

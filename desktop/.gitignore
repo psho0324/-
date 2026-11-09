@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.log
+.env
+.env.*
+tools/browser-tests/preview/
+tools/browser-tests/out/
+test-results/

@@ -1,0 +1,68 @@
+{
+  "name": "my-planner",
+  "version": "0.1.0",
+  "description": "캘린더 + 일정/할 일 관리 데스크톱 앱",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "test:desktop": "node tools/desktop-smoke.cjs",
+    "test:package": "node tools/check-package.cjs"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "26.18.0",
+    "playwright": "1.58.2"
+  },
+  "author": "떠돌이",
+  "license": "UNLICENSED",
+  "private": true,
+  "build": {
+    "appId": "com.myplanner.app",
+    "productName": "my-planner",
+    "asar": true,
+    "artifactName": "MyPlanner-Setup.exe",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "store.js",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "executableName": "MyPlanner"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "내 플래너",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "psho0324",
+        "repo": "-",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
