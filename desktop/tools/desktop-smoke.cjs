@@ -36,7 +36,7 @@ const annotation = message => console.error('::error title=Electron integration 
 // rejection when Electron exits very early. Retain those errors as evidence too.
 process.on('unhandledRejection', error => {
   report.failures.push({ kind: 'unhandledRejection', message: String(error?.message || error), stack: error?.stack });
-  annotation(error?.message || error);
+  annotation(error?.stack || error?.message || error);
   process.exitCode = 1;
 });
 process.on('exit', () => {
@@ -91,11 +91,24 @@ async function addTodo(page, title) {
   assert.equal(initial.todos.length, 0, 'Installed app contains sample/personal tasks');
   assert.equal(initial.events.length, 0, 'Installed app contains sample/personal events');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-  const prefs = await running.evaluate(({ BrowserWindow }) => {
+  const prefs = await running.evaluate(({ BrowserWindow, app }) => {
     const w = BrowserWindow.getAllWindows()[0];
-    return { preload: w.webContents.getLastWebPreferences().preload, contextIsolation: w.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: w.webContents.getLastWebPreferences().nodeIntegration };
+    globalThis.__plannerSmokePreloadErrors = [];
+    w.webContents.on('preload-error', (_event, preloadPath, error) => {
+      globalThis.__plannerSmokePreloadErrors.push({ path: preloadPath, message: error.message, stack: error.stack });
+    });
+    return { appPath: app.getAppPath(), contextIsolation: w.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: w.webContents.getLastWebPreferences().nodeIntegration };
   });
-  assert(prefs.preload.endsWith('preload.js'));
+  // Electron 33 omits preload from getLastWebPreferences. Check the actual
+  // application path plus IPC execution and listen for native preload failures.
+  if (prefs.appPath.endsWith('.asar')) {
+    assert(require('@electron/asar').extractFile(prefs.appPath, 'preload.js').length > 0, 'Installed preload.js missing from actual app archive');
+  } else {
+    assert(fs.existsSync(path.join(prefs.appPath, 'preload.js')), 'Actual source preload.js missing');
+  }
+  await page.reload();
+  await page.waitForFunction(() => window.storage && typeof window.storage.info === 'function' && document.querySelector('#homeBody')?.children.length > 0);
+  assert.deepEqual(await running.evaluate(() => globalThis.__plannerSmokePreloadErrors), [], 'Native preload-error event fired');
   assert(prefs.contextIsolation && !prefs.nodeIntegration);
   const icon = await running.evaluate(({ app, nativeImage }) => !nativeImage.createFromPath(app.getAppPath() + '/assets/icon.png').isEmpty());
   assert(icon, 'Packaged window/tray icon cannot be read');
@@ -168,7 +181,7 @@ async function addTodo(page, title) {
   if (report.failures.length) throw Error('Renderer runtime errors were captured');
 })().catch(async error => {
   report.failures.push({ message: error.message, stack: error.stack });
-  annotation(error.message);
+  annotation(error.stack || error.message);
   console.error(error.stack);
   if (running) { try { await (await running.firstWindow({ timeout: 2000 })).screenshot({ path: path.join(output, 'failure.png') }); } catch {} }
   process.exitCode = 1;
