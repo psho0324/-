@@ -286,6 +286,15 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 /* ---------- 할 일 / 공통 목록 ---------- */
 .todo-add { display: flex; flex-direction: column; gap: 8px; padding: 0 0 12px; }
 .todo-add > input { width: 100%; }
+.field-error { margin: 0; color: #b42318; font-size: 13px; }
+input[aria-invalid="true"] { border-color: #b42318; }
+.category-manage-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.category-manage-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.category-manage-row > button { flex-shrink: 0; }
+@media (prefers-color-scheme: dark) {
+  .field-error { color: #ffb4ab; }
+  input[aria-invalid="true"] { border-color: #ffb4ab; }
+}
 .todo-add-row { display: flex; gap: 6px; }
 .todo-add-row input[type="date"] { flex: 1; min-width: 0; }
 .filters { display: flex; gap: 4px; padding: 0 0 12px; }
@@ -398,7 +407,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 .cat-item.off .cat-name { color: var(--muted); text-decoration: line-through; }
 .cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cat-edit {
-  opacity: 0; flex-shrink: 0;
+  opacity: 1; flex-shrink: 0;
   padding: 4px 8px; margin-right: 2px;
   border: 0; border-radius: 6px;
   background: transparent; color: var(--muted); cursor: pointer;

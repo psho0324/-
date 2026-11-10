@@ -24,7 +24,9 @@ for (const s of scripts) {
   if (/<\/script/i.test(s)) throw new Error('스크립트 안에 </script 가 있어 인라인할 수 없어요');
 }
 
-const page = `<title>내 플래너</title>
+const page = `<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>내 플래너</title>
 <style>
 ${read('styles.css')}
 </style>

@@ -115,6 +115,89 @@ async function addTodo(page, title) {
   record('Real Electron window, actual preload IPC, context isolation, empty first-run data, icon path');
   await page.screenshot({ path: path.join(output, 'startup.png') });
 
+  // Regression: use the actual Add buttons (the old smoke only pressed Enter).
+  for (const [nav, inputId, formId, errorId, key, list] of [
+    ['todos', 'todoNew', 'todoAdd', 'todoAddError', 'todos', '#todoList'],
+    ['goals', 'projNew', 'projAdd', 'projAddError', 'projects', '#projList'],
+  ]) {
+    await page.locator('[data-nav="' + nav + '"]').click();
+    const before = (await page.evaluate(() => window.storage.load()))[key].length;
+    for (const empty of ['', '   ']) {
+      await page.locator('#' + inputId).fill(empty);
+      await page.locator('#' + formId + ' button[type=submit]').click();
+      assert(await page.locator('#' + errorId).isVisible());
+      assert.equal(await page.evaluate(() => document.activeElement.id), inputId);
+      assert.equal((await page.evaluate(() => window.storage.load()))[key].length, before);
+    }
+    await page.locator('#' + inputId).fill('SMOKE button ' + nav);
+    assert(!(await page.locator('#' + errorId).isVisible()));
+    await page.locator('#' + formId + ' button[type=submit]').click();
+    await page.locator(list).getByText('SMOKE button ' + nav, { exact: true }).waitFor();
+    await until(async () => (await page.evaluate(() => window.storage.load()))[key].some(x => x.title === 'SMOKE button ' + nav), 'Add button did not persist ' + nav);
+  }
+  record('Todo and goal Add buttons: blank/whitespace focus + warning, filled titles visible and saved');
+
+  const categorySnapshot = JSON.stringify((await page.evaluate(() => window.storage.load())).categories);
+  await page.mouse.move(1100, 100);
+  assert.equal(await page.locator('.cat-edit').first().evaluate(el => getComputedStyle(el).opacity), '1');
+  await page.locator('[data-nav="settings"]').click();
+  assert.equal(await page.locator('#set-category-list button').count(), JSON.parse(categorySnapshot).length);
+  for (const cancel of ['button', 'Escape']) {
+    await page.locator('#set-catNew').click();
+    await page.locator('#cat-name').fill('SMOKE discard ' + cancel);
+    await page.locator('#cat-colors .swatch').nth(1).click();
+    await page.waitForTimeout(180);
+    assert.equal(JSON.stringify((await page.evaluate(() => window.storage.load())).categories), categorySnapshot, 'Draft leaked to native storage');
+    if (cancel === 'button') await page.locator('#cat-cancel').click();
+    else await page.keyboard.press('Escape');
+    await page.locator('#catDialog').waitFor({ state: 'hidden' });
+  }
+  await page.reload();
+  await page.waitForFunction(() => window.storage && document.querySelector('#homeBody')?.children.length);
+  assert.equal(JSON.stringify((await page.evaluate(() => window.storage.load())).categories), categorySnapshot);
+  record('Visible category editing controls; draft name/color never saved after Cancel or Escape/reload');
+
+  await page.locator('[data-nav="settings"]').click();
+  await page.locator('#set-category-list button').first().click();
+  const existingId = (await page.evaluate(() => window.storage.load())).categories[0].id;
+  await page.locator('#cat-name').fill('SMOKE renamed');
+  await page.locator('#cat-done').click();
+  await until(async () => (await page.evaluate(() => window.storage.load())).categories.some(c => c.id === existingId && c.name === 'SMOKE renamed'), 'Existing category rename not saved');
+  await page.locator('#set-catNew').click();
+  await page.locator('#cat-name').fill('   ');
+  await page.locator('#cat-done').click();
+  assert(await page.locator('#catDialog').isVisible());
+  assert.equal(JSON.stringify((await page.evaluate(() => window.storage.load())).categories).includes('SMOKE category'), false);
+  await page.locator('#cat-name').fill('SMOKE category');
+  await page.locator('#cat-done').click();
+  await until(async () => (await page.evaluate(() => window.storage.load())).categories.some(c => c.name === 'SMOKE category'), 'Confirmed category missing');
+  const addedId = (await page.evaluate(() => window.storage.load())).categories.find(c => c.name === 'SMOKE category').id;
+  for (const [nav, inputId, catId, formId] of [
+    ['todos', 'todoNew', 'todoNewCat', 'todoAdd'], ['goals', 'projNew', 'projNewCat', 'projAdd'],
+  ]) {
+    await page.locator('[data-nav="' + nav + '"]').click();
+    await page.locator('#' + inputId).fill('SMOKE linked ' + nav);
+    await page.locator('#' + catId).selectOption(addedId);
+    await page.locator('#' + formId + ' button[type=submit]').click();
+  }
+  await page.locator('[data-nav="settings"]').click();
+  await page.getByRole('button', { name: 'SMOKE category 편집·삭제', exact: true }).click();
+  await page.locator('#cat-delete').click();
+  await until(async () => !(await page.evaluate(() => window.storage.load())).categories.some(c => c.id === addedId), 'Category deletion not persisted');
+  const afterDelete = await page.evaluate(() => window.storage.load());
+  assert.equal(afterDelete.todos.find(t => t.title === 'SMOKE linked todos').categoryId, null);
+  assert.equal(afterDelete.projects.find(p => p.title === 'SMOKE linked goals').categoryId, null);
+  await page.locator('#toast .toast-btn').click();
+  await until(async () => (await page.evaluate(() => window.storage.load())).categories.some(c => c.id === addedId), 'Category undo failed');
+  const afterUndo = await page.evaluate(() => window.storage.load());
+  assert.equal(afterUndo.todos.find(t => t.title === 'SMOKE linked todos').categoryId, addedId);
+  assert.equal(afterUndo.projects.find(p => p.title === 'SMOKE linked goals').categoryId, addedId);
+  await page.getByRole('button', { name: 'SMOKE category 편집·삭제', exact: true }).click();
+  await page.locator('#cat-delete').click();
+  await until(async () => !(await page.evaluate(() => window.storage.load())).categories.some(c => c.id === addedId), 'Repeated category deletion failed');
+  await page.screenshot({ path: path.join(output, 'category-management.png') });
+  record('Settings category rename/create/delete and undo preserve linked todo/goal data');
+
   // Submit inside the main process's executeJavaScript and request quit immediately
   // afterward, rather than waiting for the renderer's 100 ms debounce.
   await page.locator('[data-nav="todos"]').click();
@@ -128,6 +211,9 @@ async function addTodo(page, title) {
   await closed; running = null;
   assert(JSON.parse(fs.readFileSync(dataFile)).todos.some(t => t.title === 'SMOKE immediate quit task'));
   page = await launch();
+  const restarted = await page.evaluate(() => window.storage.load());
+  assert(restarted.projects.some(p => p.title === 'SMOKE button goals'));
+  assert(!restarted.categories.some(c => c.name === 'SMOKE category' || c.name.startsWith('SMOKE discard')));
   assert((await page.evaluate(() => window.storage.load())).todos.some(t => t.title === 'SMOKE immediate quit task'));
   record('Immediate UI submission → real main app.quit → persisted JSON → restart retains task');
 

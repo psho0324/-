@@ -109,7 +109,9 @@
         <div class="page-body">
           <div class="narrow">
             <form id="todoAdd" class="todo-add" autocomplete="off">
-              <input id="todoNew" placeholder="할 일 추가 후 Enter" aria-label="새 할 일">
+              <label for="todoNew">할 일 이름</label>
+              <input id="todoNew" placeholder="이름을 입력한 뒤 추가를 누르세요" aria-label="새 할 일" aria-describedby="todoAddError" aria-required="true">
+              <p id="todoAddError" class="field-error" role="alert" hidden>할 일 이름을 먼저 입력해 주세요.</p>
               <div class="todo-add-row">
                 <input type="date" id="todoNewDue" aria-label="마감일">
                 <select id="todoNewPrio" aria-label="우선순위">
@@ -117,7 +119,7 @@
                   <option value="1" selected>보통</option>
                   <option value="2">높음</option>
                 </select>
-                <button type="submit" class="btn primary">추가</button>
+                <button type="submit" class="btn primary">할 일 추가</button>
               </div>
               <div class="todo-add-row">
                 <select id="todoNewCat" aria-label="카테고리"></select>
@@ -149,11 +151,13 @@
         </div>
         <div class="page-body">
           <form id="projAdd" class="todo-add narrow" autocomplete="off">
-            <input id="projNew" placeholder="이루고 싶은 목표 이름 후 Enter" aria-label="새 목표">
+            <label for="projNew">목표 이름</label>
+            <input id="projNew" placeholder="이름을 입력한 뒤 추가를 누르세요" aria-label="새 목표" aria-describedby="projAddError" aria-required="true">
+            <p id="projAddError" class="field-error" role="alert" hidden>목표 이름을 먼저 입력해 주세요.</p>
             <div class="todo-add-row">
               <input type="date" id="projNewDue" aria-label="목표일">
               <select id="projNewCat" aria-label="카테고리"></select>
-              <button type="submit" class="btn primary">추가</button>
+              <button type="submit" class="btn primary">목표 추가</button>
             </div>
           </form>
           <div class="filters">
@@ -228,9 +232,10 @@
             <div class="card set-card">
               <h2>카테고리</h2>
               <div class="set-row">
-                <span class="set-text"><b>카테고리 관리</b><span class="muted">이름·색 변경과 삭제는 왼쪽 목록의 ✎ 버튼에서 해요.</span></span>
+                <span class="set-text"><b>카테고리 관리</b><span class="muted">아래 목록의 편집·삭제 버튼에서 이름과 색을 바꾸거나 삭제할 수 있어요.</span></span>
                 <button type="button" class="btn" id="set-catNew">+ 카테고리 추가</button>
               </div>
+              <div id="set-category-list" class="category-manage-list"></div>
             </div>
 
             <div class="card set-card" id="set-locationCard">
@@ -458,11 +463,12 @@
         <div id="cat-colors" class="colors"></div>
         <input type="color" id="cat-color" class="color-input" aria-label="색상 직접 고르기" title="색상 직접 고르기">
       </div>
-      <p class="note">이름과 색은 바로 적용돼요. 삭제하면 이 카테고리의 일정·할 일·목표는 미분류로 바뀌고, 일정은 기존 색을 그대로 유지해요.</p>
+      <p id="cat-note" class="note">이름과 색은 바로 적용돼요. 삭제하면 이 카테고리의 일정·할 일·목표는 미분류로 바뀌고, 일정은 기존 색을 그대로 유지해요.</p>
       <div class="dlg-actions">
         <button type="button" id="cat-delete" class="btn danger">삭제</button>
+        <button type="button" id="cat-cancel" class="btn" hidden>취소</button>
         <span class="spacer"></span>
-        <button type="submit" class="btn primary">완료</button>
+        <button type="submit" id="cat-done" class="btn primary">완료</button>
       </div>
     </form>
   </dialog>

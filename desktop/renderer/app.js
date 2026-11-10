@@ -300,9 +300,9 @@
       }, h('span', { class: 'cat-box' }), h('span', { class: 'cat-name', text: c.name }));
       const item = h('div', { class: 'cat-item' + (off ? ' off' : '') }, toggle,
         c.id ? h('button', {
-          type: 'button', class: 'cat-edit', title: '이름·색 편집', 'aria-label': `${c.name} 편집`,
+          type: 'button', class: 'cat-edit', title: '이름·색 편집 및 삭제', 'aria-label': `${c.name} 편집`,
           onclick: () => openCatEdit(c.id),
-        }, '✎') : null);
+        }, '편집') : null);
       item.style.setProperty('--c', c.color);
       box.append(item);
     }
@@ -1924,9 +1924,12 @@
   // ---------- 카테고리 편집 대화상자 ----------
   const catDlg = $('#catDialog');
   let editingCatId = null;
+  // 새 카테고리는 추가를 확정하기 전까지 저장 자료에 넣지 않습니다.
+  let draftCategory = null;
+  const editingCategory = () => draftCategory || catById(editingCatId);
 
   function paintCatSwatches() {
-    const c = catById(editingCatId);
+    const c = editingCategory();
     document.querySelectorAll('#cat-colors .swatch').forEach((b) => {
       b.setAttribute('aria-pressed', String(!!c && b.dataset.color === String(c.color).toLowerCase()));
     });
@@ -1934,20 +1937,27 @@
   }
 
   function setCatColor(color) {
-    const c = catById(editingCatId);
+    const c = editingCategory();
     if (!c) return;
     c.color = color;
-    save();
     paintCatSwatches();
-    render();
+    if (!draftCategory) { save(); render(); }
   }
 
   function openCatEdit(id, isNew) {
-    const c = catById(id);
+    const c = isNew ? draftCategory : catById(id);
     if (!c) return;
+    if (!isNew) draftCategory = null;
     editingCatId = id;
     $('#catDlgTitle').textContent = isNew ? '새 카테고리' : '카테고리 편집';
     $('#cat-name').value = c.name;
+    $('#cat-name').setCustomValidity('');
+    $('#cat-delete').hidden = !!isNew;
+    $('#cat-cancel').hidden = !isNew;
+    $('#cat-done').textContent = isNew ? '추가' : '완료';
+    $('#cat-note').textContent = isNew
+      ? '추가를 눌러야 저장돼요. 취소하거나 Esc로 닫으면 카테고리가 생기지 않아요.'
+      : '이름과 색은 바로 적용돼요. 삭제하면 이 카테고리의 일정·할 일·목표는 미분류로 바뀌고, 일정은 기존 색을 그대로 유지해요.';
     paintCatSwatches();
     catDlg.showModal();
     $('#cat-name').focus();
@@ -1958,11 +1968,8 @@
     // 이미 쓰는 색은 피해서, 안 쓴 색부터 골라 줍니다.
     const used = new Set(data.categories.map((c) => String(c.color).toLowerCase()));
     const color = COLORS.find((c) => !used.has(c)) || COLORS[data.categories.length % COLORS.length];
-    const cat = { id: uid(), name: '새 카테고리', color };
-    data.categories.push(cat);
-    save();
-    render();
-    openCatEdit(cat.id, true);
+    draftCategory = { id: uid(), name: '새 카테고리', color };
+    openCatEdit(draftCategory.id, true);
   }
 
   function deleteCategory(id) {
@@ -2095,11 +2102,32 @@
     });
     $('#cat-color').addEventListener('input', (e) => setCatColor(e.target.value));
     $('#cat-name').addEventListener('input', (e) => {
-      const c = catById(editingCatId);
-      if (c) { c.name = e.target.value; save(); render(); }
+      e.target.setCustomValidity('');
+      const c = editingCategory();
+      if (c) {
+        c.name = e.target.value;
+        if (!draftCategory) { save(); render(); }
+      }
     });
     $('#cat-delete').addEventListener('click', () => deleteCategory(editingCatId));
-    $('#catForm').addEventListener('submit', (e) => { e.preventDefault(); catDlg.close(); });
+    $('#cat-cancel').addEventListener('click', () => catDlg.close());
+    catDlg.addEventListener('close', () => { draftCategory = null; editingCatId = null; });
+    $('#catForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (draftCategory) {
+        const name = $('#cat-name').value.trim();
+        if (!name) {
+          $('#cat-name').setCustomValidity('카테고리 이름을 입력해 주세요.');
+          $('#cat-name').reportValidity();
+          return;
+        }
+        data.categories.push({ ...draftCategory, name });
+        draftCategory = null;
+        save();
+        render();
+      }
+      catDlg.close();
+    });
     $('#catNew').addEventListener('click', newCategory);
 
     // 일정 대화상자
@@ -2135,10 +2163,26 @@
     $('#pj-delete').addEventListener('click', deleteProject);
 
     // 할 일 빠른 추가
+    for (const [inputId, errorId] of [['todoNew', 'todoAddError'], ['projNew', 'projAddError']]) {
+      $('#' + inputId).addEventListener('input', () => {
+        $('#' + inputId).removeAttribute('aria-invalid');
+        $('#' + errorId).hidden = true;
+      });
+    }
+    function addTitle(inputId, errorId) {
+      const input = $('#' + inputId);
+      const title = input.value.trim();
+      $('#' + errorId).hidden = !!title;
+      if (!title) {
+        input.setAttribute('aria-invalid', 'true');
+        input.focus();
+      } else input.removeAttribute('aria-invalid');
+      return title;
+    }
     $('#todoAdd').addEventListener('submit', (e) => {
       e.preventDefault();
       const input = $('#todoNew');
-      const title = input.value.trim();
+      const title = addTitle('todoNew', 'todoAddError');
       if (!title) return;
       data.todos.push({
         id: uid(),
@@ -2162,7 +2206,7 @@
     $('#projAdd').addEventListener('submit', (e) => {
       e.preventDefault();
       const input = $('#projNew');
-      const title = input.value.trim();
+      const title = addTitle('projNew', 'projAddError');
       if (!title) return;
       data.projects.push({
         id: uid(),
@@ -2318,6 +2362,10 @@
   };
 
   function renderSettings() {
+    $('#set-category-list').replaceChildren(...data.categories.map((c) =>
+      h('div', { class: 'category-manage-row' },
+        h('span', { text: catName(c) }),
+        h('button', { type: 'button', class: 'btn', 'aria-label': `${catName(c)} 편집·삭제`, onclick: () => openCatEdit(c.id) }, '편집·삭제'))));
     $('#set-weekStart').value = String(weekStart());
     $('#set-holidays').checked = data.settings.holidays !== false;
     $('#set-notify').checked = data.settings.notifications !== false;

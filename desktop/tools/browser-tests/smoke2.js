@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 
 const S = require('path').join(__dirname, 'out'); // 스크린샷이 저장되는 폴더
 require('fs').mkdirSync(S, { recursive: true });
-const URL = 'file://' + __dirname + '/preview/index.html';
+const URL = process.env.PLANNER_PREVIEW_URL || 'file://' + __dirname + '/preview/index.html';
 const results = [];
 const check = (name, ok, extra) => {
   results.push({ name, ok: !!ok, extra });
@@ -10,7 +10,7 @@ const check = (name, ok, extra) => {
 };
 
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul', acceptDownloads: true });
   const page = await ctx.newPage();
   const errors = [];
@@ -168,10 +168,13 @@ const check = (name, ok, extra) => {
   await page.click('#catForm button[type=submit]');
   check('완료 누르면 닫힘', !(await visible('#catDialog')));
   await page.click('#catNew');
-  check('+ 누르면 새 카테고리 대화상자', (await text('#catDlgTitle')) === '새 카테고리' && (await page.$$('.cat-item')).length === 7);
+  check('+ 누르면 저장 전 새 카테고리 대화상자', (await text('#catDlgTitle')) === '새 카테고리' && (await page.$$('.cat-item')).length === 6);
+  await page.fill('#cat-name', '독서');
+  await page.click('#catForm button[type=submit]');
+  await page.hover('.cat-item:has-text("독서")');
+  await page.click('.cat-item:has-text("독서") .cat-edit');
   const colors = await page.$$eval('.cat-item', (e) => e.map((x) => x.style.getPropertyValue('--c').toLowerCase()));
   check('새 카테고리 색이 기존과 겹치지 않음', new Set(colors.slice(0, -1)).size === colors.slice(0, -1).length && !colors.slice(0, -2).includes(colors[colors.length - 2]) , colors.join(','));
-  await page.fill('#cat-name', '독서');
   await page.click('#cat-delete');
   await settle();
   d = await stored();
@@ -403,8 +406,8 @@ const check = (name, ok, extra) => {
   await page.click('#set-catNew');
   await page.waitForSelector('#catDialog[open]');
   await settle();
-  check('설정의 카테고리 추가 → 편집 창', (await stored()).categories.length === catsBefore + 1);
-  await page.click('#cat-delete');
+  check('설정의 카테고리 추가는 확정 전 저장 안 함', (await stored()).categories.length === catsBefore);
+  await page.click('#cat-cancel');
   await settle();
   if (await page.$('#catDialog[open]')) await page.keyboard.press('Escape');
   await settle();
