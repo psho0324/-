@@ -115,6 +115,14 @@ async function addTodo(page, title) {
   record('Real Electron window, actual preload IPC, context isolation, empty first-run data, icon path');
   await page.screenshot({ path: path.join(output, 'startup.png') });
 
+  const expectedVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  assert.equal(await page.evaluate(() => window.plannerApp.getVersion()), expectedVersion);
+  await page.waitForFunction(version => document.title === '내 플래너 v' + version, expectedVersion);
+  await page.locator('[data-nav="settings"]').click();
+  assert.equal(await page.locator('#app-version').innerText(), 'v' + expectedVersion);
+  await page.screenshot({ path: path.join(output, 'app-version.png') });
+  record('App version from real Electron matches package metadata in settings and window title');
+
   // Regression: use the actual Add buttons (the old smoke only pressed Enter).
   for (const [nav, inputId, formId, errorId, key, list] of [
     ['todos', 'todoNew', 'todoAdd', 'todoAddError', 'todos', '#todoList'],

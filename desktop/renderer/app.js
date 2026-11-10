@@ -2361,6 +2361,22 @@
     el.className = 'set-msg' + (kind ? ' ' + kind : '');
   };
 
+  async function loadAppVersion() {
+    const label = $('#app-version');
+    if (!window.plannerApp?.getVersion) {
+      label.textContent = '브라우저 미리보기';
+      return;
+    }
+    try {
+      const version = await window.plannerApp.getVersion();
+      if (typeof version !== 'string' || !version.trim()) throw new Error('Missing app version');
+      label.textContent = 'v' + version;
+      document.title = '내 플래너 v' + version;
+    } catch {
+      label.textContent = '버전 정보를 불러오지 못했어요.';
+    }
+  }
+
   function renderSettings() {
     $('#set-category-list').replaceChildren(...data.categories.map((c) =>
       h('div', { class: 'category-manage-row' },
@@ -2519,5 +2535,6 @@
     if (needsSave) save(); // 빠진 기본값을 채운 상태로 한 번 저장
     bind();
     render();
+    loadAppVersion();
   })();
 })();

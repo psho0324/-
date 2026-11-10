@@ -194,6 +194,7 @@ function start() {
     try { store.backupIfNeeded(); } catch (e) { console.error('자동 백업 실패', e); }
     applyAutoStart();
 
+    ipcMain.handle('app:version', () => app.getVersion());
     ipcMain.handle('data:load', () => data);
     ipcMain.on('app:flush-done', (_e, id, ok) => { const f = flushWaiters.get(id); if (f) f(ok === true); });
     ipcMain.handle('data:save', (_e, next) => {

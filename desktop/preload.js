@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// 버전은 저장 데이터가 아니라 실행 중인 앱에서 읽습니다.
+contextBridge.exposeInMainWorld('plannerApp', {
+  getVersion: () => ipcRenderer.invoke('app:version'),
+});
+
 contextBridge.exposeInMainWorld('storage', {
   load: () => ipcRenderer.invoke('data:load'),
   save: (data) => ipcRenderer.invoke('data:save', data),
