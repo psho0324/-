@@ -1,0 +1,54 @@
+{
+  "userAppVersion": "0.1.0",
+  "userWindowsVersion": "미제공",
+  "testPlatform": "linux",
+  "symptoms": [
+    {
+      "page": "todos",
+      "case": "blank title then click add",
+      "before": 0,
+      "after": 0,
+      "focused": "",
+      "dialogs": 0,
+      "validation": {
+        "required": false,
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "page": "todos",
+      "case": "filled title then click add",
+      "after": 1,
+      "exists": true,
+      "visible": true
+    },
+    {
+      "page": "goals",
+      "case": "blank title then click add",
+      "before": 0,
+      "after": 0,
+      "focused": "",
+      "dialogs": 0,
+      "validation": {
+        "required": false,
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "page": "goals",
+      "case": "filled title then click add",
+      "after": 1,
+      "exists": true,
+      "visible": true
+    }
+  ],
+  "errors": [],
+  "runtime": {
+    "electron": "33.4.11",
+    "appVersion": "0.1.0",
+    "os": "linux",
+    "userData": "격리된 임시 테스트 프로필(검사 후 삭제)"
+  }
+}

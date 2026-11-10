@@ -1,0 +1,23 @@
+{
+  "mode": "Real Linux Electron from desktop/main.js, temporary isolated userData, unchanged renderer CSP",
+  "userInstalledAppVersion": "v0.1.0 (reported to parent)",
+  "userWindowsVersion": "not reported",
+  "userScreenshot": "not supplied",
+  "errors": [],
+  "findings": [
+    "Default and new category rename/delete succeed via existing sidebar pencil and dialog using real native IPC.",
+    "Settings contains Add only; desktop pencil is hidden by opacity until hover/focus.",
+    "New category is created immediately; Escape closes dialog without undoing creation."
+  ],
+  "actualVersion": "0.1.0",
+  "desktopPencilOpacity": "0",
+  "pencilHoverOpacity": "1",
+  "defaultRenameNativeIPC": true,
+  "defaultDeleteNativeIPC": true,
+  "addEscapeAccumulates": {
+    "initialAfterDefaultDeletion": 4,
+    "afterTwoAddEscape": 6
+  },
+  "newRenameAndDeleteNativeIPC": true,
+  "reloadRetainsDefaultDeletion": true
+}
