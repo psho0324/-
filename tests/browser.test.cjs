@@ -211,7 +211,7 @@ function card(page, id, list = 'project-list') {
       ready: false,
       downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
       downloadPlatform: 'windows',
-      downloadVersion: '0.1.0',
+      downloadVersion: '0.1.1',
       downloadRequirements: 'Windows 10/11 · 64비트',
       unsigned: true
     };
@@ -251,7 +251,7 @@ function card(page, id, list = 'project-list') {
       calendarRelease.downloadUrl
     );
     assert.equal(await releasedPage.locator('#download-pc-title').textContent(), 'Windows 버전');
-    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.0');
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.1');
     assert(await releasedPage.locator('#download-unsigned-notice').isVisible());
     assert.match(
       await releasedPage.locator('#download-unsigned-notice').textContent(),

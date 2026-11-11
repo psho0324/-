@@ -1,5 +1,11 @@
 // Hosted Windows runner only: real installed app -> next NSIS version -> relaunch.
 // Uses a newly created runner profile, never a person's existing planner data.
+// Surface setup/finalization failures too; the main scenario already annotates its errors.
+process.on('uncaughtException', error => {
+ const text=String(error.stack||error.message||error).slice(0,12000);
+ console.error('::error title=Updater test setup or cleanup::'+text.replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A'));
+ process.exit(1);
+});
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {execFileSync}=require('node:child_process');
 const {_electron}=require('playwright');
