@@ -381,6 +381,7 @@ const check = (name, ok, extra) => {
   await page.click('[data-nav="settings"]');
   check('설정 메뉴 → 설정 페이지', (await visible('#page-settings')) && !(await visible('#page-home')) && await page.$eval('[data-nav="settings"]', (b) => b.classList.contains('active')));
   check('브라우저 미리보기를 설치 앱 버전과 구분', (await text('#app-version')) === '브라우저 미리보기');
+  check('미리보기에는 설치 업데이트 기능이 비활성', (await text('#update-status')).includes('브라우저 미리보기') && await page.$eval('#update-check', b => b.disabled) && !(await visible('#update-install')));
   check('캘린더 상단에서 요일 선택은 사라짐', (await page.$$('#weekStart')).length === 0);
   let dS = await stored();
   check('현재 데이터 요약 표시', (await text('#set-summary')).includes(`일정 ${dS.events.length}개`) && (await text('#set-summary')).includes(`할 일 ${dS.todos.length}개`), await text('#set-summary'));

@@ -122,6 +122,14 @@ async function addTodo(page, title) {
   assert.equal(await page.locator('#app-version').innerText(), 'v' + expectedVersion);
   await page.screenshot({ path: path.join(output, 'app-version.png') });
   record('App version from real Electron matches package metadata in settings and window title');
+  const updateState = await page.evaluate(() => window.plannerApp.updates.getState());
+  assert.equal(updateState.currentVersion, expectedVersion);
+  if (!packaged || process.platform !== 'win32') {
+    assert.equal(updateState.status, 'unsupported');
+    assert(await page.locator('#update-check').isDisabled());
+    assert(!(await page.locator('#update-install').isVisible()));
+  } else assert.notEqual(updateState.status, 'unsupported');
+  record('Updater fixed IPC and source/installed Windows availability match');
 
   // Regression: use the actual Add buttons (the old smoke only pressed Enter).
   for (const [nav, inputId, formId, errorId, key, list] of [

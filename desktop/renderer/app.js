@@ -2377,6 +2377,51 @@
     }
   }
 
+  function loadUpdates() {
+    const api = window.plannerApp?.updates;
+    const status = $('#update-status');
+    const check = $('#update-check');
+    const install = $('#update-install');
+    if (!api) { status.textContent = '브라우저 미리보기에서는 업데이트할 수 없어요.'; return; }
+    let revision = -1;
+    function show(next) {
+      if (next.revision < revision) return;
+      revision = next.revision;
+      check.disabled = ['unsupported', 'checking', 'downloading', 'ready', 'preparing', 'installing'].includes(next.status);
+      install.hidden = next.status !== 'ready';
+      $('#navUpdateBadge').hidden = next.status !== 'ready';
+      const version = next.version ? 'v' + next.version : '새 버전';
+      const messages = {
+        idle: '새 버전을 자동으로 확인해요.',
+        checking: '새 버전을 확인하고 있어요…',
+        'up-to-date': '현재 최신 버전을 사용하고 있어요.',
+        downloading: version + ' 다운로드 중… ' + Math.round(next.percent) + '%',
+        ready: version + ' 준비 완료. 설치를 선택하면 저장과 백업을 확인한 뒤 다시 시작해요.',
+        preparing: '저장과 백업을 확인하고 있어요…',
+        installing: '저장된 내용을 확인했어요. 업데이트를 설치하고 다시 시작합니다…',
+        error: '업데이트를 확인하거나 내려받지 못했어요. 지금 버전을 계속 사용하고 나중에 다시 시도해 주세요.',
+        unsupported: next.disabledReason === 'store'
+          ? 'Microsoft Store에서 업데이트를 확인해 주세요.'
+          : '설치된 Windows 앱에서 업데이트를 확인할 수 있어요.',
+      };
+      status.textContent = ({
+        save: '저장 완료를 확인하지 못해 업데이트하지 않았어요. 내용을 저장한 뒤 다시 시도해 주세요.',
+        backup: '업데이트 전 백업을 만들지 못했어요. 저장 위치를 확인한 뒤 다시 시도해 주세요.',
+        busy: '종료나 저장 확인이 진행 중이에요. 잠시 후 다시 시도해 주세요.',
+        install: '설치 프로그램을 시작하지 못했어요. 지금 앱을 계속 사용하고 다시 시도해 주세요.',
+      })[next.issue] || messages[next.status] || '업데이트 정보를 확인하고 있어요.';
+    }
+    async function command(action) {
+      try { show(await action()); }
+      catch { status.textContent = '업데이트 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'; }
+    }
+    const unsubscribe = api.onState(show);
+    window.addEventListener('beforeunload', () => unsubscribe());
+    check.addEventListener('click', () => { void command(() => api.check()); });
+    install.addEventListener('click', () => { void command(() => api.install()); });
+    void command(() => api.getState());
+  }
+
   function renderSettings() {
     $('#set-category-list').replaceChildren(...data.categories.map((c) =>
       h('div', { class: 'category-manage-row' },
@@ -2536,5 +2581,6 @@
     bind();
     render();
     loadAppVersion();
+    loadUpdates();
   })();
 })();

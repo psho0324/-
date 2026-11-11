@@ -3,6 +3,16 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 버전은 저장 데이터가 아니라 실행 중인 앱에서 읽습니다.
 contextBridge.exposeInMainWorld('plannerApp', {
   getVersion: () => ipcRenderer.invoke('app:version'),
+  updates: {
+    getState: () => ipcRenderer.invoke('updates:state'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    install: () => ipcRenderer.invoke('updates:install'),
+    onState: (cb) => {
+      const listener = (_event, state) => cb(state);
+      ipcRenderer.on('updates:state', listener);
+      return () => ipcRenderer.removeListener('updates:state', listener);
+    },
+  },
 });
 
 contextBridge.exposeInMainWorld('storage', {

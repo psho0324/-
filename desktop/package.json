@@ -1,11 +1,11 @@
 {
   "name": "my-planner",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "캘린더 + 일정/할 일 관리 데스크톱 앱",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js",
+    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "test:desktop": "node tools/desktop-smoke.cjs",
     "test:package": "node tools/check-package.cjs"
@@ -31,6 +31,7 @@
       "main.js",
       "preload.js",
       "store.js",
+      "updater.js",
       "renderer/**",
       "assets/**",
       "package.json"
@@ -64,5 +65,8 @@
         "releaseType": "release"
       }
     ]
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }

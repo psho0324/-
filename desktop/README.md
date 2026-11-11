@@ -6,8 +6,10 @@
 
 - 기존 `main.js`, `preload.js`, `store.js`, `renderer/`의 앱 기능은 유지합니다. 이 작업에서는 패키징·검사·배포 설정을 추가했습니다.
 - `package-lock.json`과 NSIS 설정, 저장소 루트의 `.github/workflows/desktop.yml`을 사용합니다. 도구 버전은 Electron **33.4.11**, electron-builder **26.18.0**, Playwright **1.58.2**로 고정했습니다.
-- **코드 서명과 자동 업데이트는 구현하지 않았습니다.** 이 배포는 Windows 10/11 **64비트 테스트 버전**입니다.
+- **코드 서명은 없습니다. 자동 업데이트는 0.1.1 후보에 추가했으며 Windows 설치·갱신 검증은 대기 중입니다.** 이 배포는 Windows 10/11 **64비트 테스트 버전**입니다.
 - Windows CI에서 원본 테스트 5개, NSIS 빌드·설치, 실제 설치 앱의 자동 검사 7개 그룹을 통과했고 `v0.1.0` Release를 공개했습니다. OS의 실제 알림·트레이 표시, 로그인·로그오프, 실제 클라우드 폴더 동기화는 사용자 PC에서 추가 확인해야 합니다. 근거는 [검증 기록](VERIFICATION.md)에 구분했습니다.
+
+현재 브랜치의 소스 버전은 **0.1.1 후보**이며 공개 Release는 **v0.1.0**입니다. 코드 준비와 배포는 구분합니다.
 
 ## 개발 실행
 
@@ -15,7 +17,7 @@
 
 ```bash
 npm ci         # 커밋된 package-lock.json과 같은 의존성 설치
-npm test       # 원본 Node 테스트 파일 5개 실행
+npm test       # 원본 5개 + 업데이트 테스트 2개 실행
 npm start      # electron . 으로 실제 앱 실행
 ```
 
@@ -28,13 +30,13 @@ npm start      # electron . 으로 실제 앱 실행
 ## 테스트
 
 ```bash
-npm test                 # Node 단위 테스트 5개 파일, Electron 실행 불필요
+npm test                 # Node 테스트 7개 파일, Electron 실행 불필요
 npm run test:desktop     # 실제 Electron 창과 저장 경로 자동 검사
 npm run dist:win         # Windows NSIS 설치 파일 제작
 npm run test:package     # 패키지의 코드·아이콘·preload 경로와 불필요한 파일 검사
 ```
 
-원본 단위 테스트 파일은 모두 유지합니다.
+원본 단위 테스트 파일은 모두 유지합니다. 업데이트 상태·저장/백업 차단 검사(`test/updater.test.js`)와 실제 라이브러리의 로컬 다운로드·해시 검사(`test/updater-download.test.js`)를 추가했습니다. [업데이트 설계와 검증 범위](docs/auto-update.md)를 참고하세요.
 
 | 파일                      | 검사 내용                                              |
 | ------------------------- | ------------------------------------------------------ |
@@ -80,7 +82,7 @@ npm run test:package
 - 결과 파일은 `dist/MyPlanner-Setup.exe`입니다. NSIS 방식이며 설치 위치를 고를 수 있습니다. 바탕화면·시작 메뉴 이름은 ‘내 플래너’, 실행 파일은 `MyPlanner.exe`입니다.
 - `build.appId`는 main의 `app.setAppUserModelId`와 같은 **`com.myplanner.app`**입니다.
 - `productName`은 **`my-planner`**로 유지합니다. 개발 실행과 설치 앱의 사용자 데이터 폴더 이름이 달라지지 않도록 한 설정입니다.
-- 포함 목록: `main.js`, `preload.js`, `store.js`, `renderer/**`, `assets/**`, `package.json`. main이 직접 불러오는 `renderer/recurrence.js`도 포함됩니다.
+- 포함 목록: `main.js`, `preload.js`, `store.js`, `updater.js`, 운영 의존성(`electron-updater` 포함), `renderer/**`, `assets/**`, `package.json`. main이 직접 불러오는 `renderer/recurrence.js`도 포함됩니다.
 - 설치 아이콘은 `assets/icon.ico`, 창·트레이 아이콘은 `assets/icon.png`입니다. 패키지 검사와 설치 후 실행 검사에서 경로를 확인합니다.
 - 제거 시 사용자 데이터를 자동으로 삭제하지 않도록 `deleteAppDataOnUninstall: false`를 사용합니다.
 - 코드 서명이 없으므로 SmartScreen에 ‘Windows의 PC 보호’와 ‘알 수 없는 게시자’가 표시될 수 있습니다. 배포한 `MyPlanner-Setup.exe`인지 출처를 확인하고 신뢰하는 경우에만 ‘추가 정보 → 실행’을 선택합니다. 보안 기능을 끄는 설정은 필요하지 않습니다.
@@ -89,12 +91,13 @@ npm run test:package
 
 저장소 루트 `.github/workflows/desktop.yml`은 `windows-latest`에서 아래 순서로 실행하도록 구성합니다.
 
-1. 잠금 파일로 설치(`npm ci`) 후 원본 테스트 5개 실행
+1. 잠금 파일로 설치(`npm ci`) 후 원본 5개 및 업데이트 테스트 2개 실행
 2. 실제 Electron 실행 검사(`tools/desktop-smoke.cjs`)
 3. NSIS 설치 파일 빌드 후 패키지 파일 검사(`tools/check-package.cjs`)
 4. NSIS 무인 설치 후 설치된 `MyPlanner.exe` 실행 검사
-5. 설치 파일의 SHA-256 생성, 결과와 스크린샷을 아티팩트로 보관
-6. 앞 단계가 성공한 **버전 태그 실행에서만** GitHub Releases에 설치 파일·체크섬·`installed.json` 공개
+5. CI 전용 다음 패치 버전을 빌드하여 실제 설치 앱의 다운로드·저장 실패 차단·갱신·재실행·데이터 보존 검사. 검사 후 원래 버전의 설치 파일을 복원하고 다시 검사
+6. 설치 파일의 SHA-256 생성, 결과와 스크린샷을 아티팩트로 보관
+7. 앞 단계가 성공한 **버전 태그 실행에서만** GitHub Releases에 설치 파일·체크섬·`latest.yml`·blockmap(생성 시)·검사 기록 공개. 다음 패치 테스트용 파일은 공개하지 않음
 
 `main` 브랜치 변경과 수동 실행은 검사 및 아티팩트 제작용입니다. 공개는 `desktop/package.json` 버전과 일치하는 `v0.1.0` 같은 태그를 푸시할 때만 진행합니다. 예를 들어 버전이 `0.1.0`일 때:
 
@@ -181,7 +184,8 @@ https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe
 
 **구현되지 않음**
 
-- 코드 서명, 자동 업데이트
+- 코드 서명
+- 자동 업데이트의 Windows 설치 앱 실증: 구현은 0.1.1 후보에 포함했지만 아직 통과 결과가 없습니다. 공개된 0.1.0에는 업데이트 기능이 없으므로 0.1.1은 한 번 직접 설치해야 합니다.
 - 두 PC에서 동시에 수정했을 때의 병합 — 현재는 **나중에 저장한 쪽이 이김**(덮이기 직전 내용은 `backups/`에 남김)
 - 임시공휴일 자동 반영 — `renderer/holidays.js`의 표에 직접 추가해야 함
 - 반복 일정의 "이 회차만 수정", 일정 크기 조절(드래그로 길이 변경) — 구현하지 않음(이전 README 기준, 이번 정리에서 다시 확인하지는 않음)

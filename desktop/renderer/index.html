@@ -46,6 +46,7 @@
         <button type="button" class="nav-item" data-nav="settings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
           <span class="ni-text"><span class="ni-label">설정</span><span class="ni-desc">앱 환경 및 데이터 관리</span></span>
+          <span id="navUpdateBadge" class="tabcount" title="새 버전 설치 가능" aria-label="새 버전 설치 가능" hidden>↑</span>
         </button>
       </nav>
 
@@ -199,6 +200,12 @@
                 <span>현재 버전</span>
                 <span id="app-version" class="muted" role="status">확인 중…</span>
               </div>
+              <p id="update-status" class="muted set-summary" role="status">업데이트 정보를 확인하고 있어요.</p>
+              <div class="row">
+                <button type="button" id="update-check" class="btn" disabled>업데이트 확인</button>
+                <button type="button" id="update-install" class="btn primary" hidden>설치하고 다시 시작</button>
+              </div>
+              <p class="muted set-summary">새 버전은 자동으로 내려받고, 설치를 선택하면 저장과 백업을 확인한 뒤 다시 시작해요.</p>
             </div>
             <div class="card set-card">
               <h2>화면</h2>

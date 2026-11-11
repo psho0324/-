@@ -47,6 +47,7 @@ const fakeElectron = {
     whenReady: () => Promise.resolve(),
     getPath: () => userData,
     getAppPath: () => '/app/path',
+    getVersion: () => require('../package.json').version,
     isPackaged: false,
     setLoginItemSettings: (o) => log.login.push(o),
     quit: () => { log.quit++; },

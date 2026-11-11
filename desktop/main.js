@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { createStore } = require('./store.js');
 const { occurrencesInRange } = require('./renderer/recurrence.js');
+const { createUpdateController } = require('./updater.js');
 
 let store = null;
 let data = null;
@@ -195,6 +196,40 @@ function start() {
     applyAutoStart();
 
     ipcMain.handle('app:version', () => app.getVersion());
+    const canUpdate = process.platform === 'win32' && app.isPackaged && !process.windowsStore;
+    const autoUpdater = canUpdate ? require('electron-updater').autoUpdater : null;
+    const updates = createUpdateController({
+      updater: autoUpdater,
+      currentVersion: app.getVersion(),
+      disabledReason: process.windowsStore ? 'store' : 'development',
+      notify: state => {
+        if (win && !win.isDestroyed()) win.webContents.send('updates:state', state);
+      },
+      prepareInstall: async () => {
+        if (quitChecking || sessionEnding || isQuitting) return 'busy';
+        quitChecking = true;
+        try {
+          // 업데이트는 일반 종료와 달리 응답 없음도 설치를 중단합니다.
+          if (await flushRenderer() !== true) { showWindow(); return 'save'; }
+          try { store.backupNow(); } catch { showWindow(); return 'backup'; }
+          return '';
+        } finally { quitChecking = false; }
+      },
+      performInstall: () => {
+        quitFlushed = true;
+        isQuitting = true;
+        autoUpdater.quitAndInstall(true, true);
+      },
+      installFailed: () => {
+        quitFlushed = false;
+        isQuitting = false;
+        showWindow();
+      },
+    });
+    ipcMain.handle('updates:state', () => updates.getState());
+    ipcMain.handle('updates:check', () => updates.check());
+    ipcMain.handle('updates:install', () => updates.install());
+    app.on('will-quit', () => updates.dispose());
     ipcMain.handle('data:load', () => data);
     ipcMain.on('app:flush-done', (_e, id, ok) => { const f = flushWaiters.get(id); if (f) f(ok === true); });
     ipcMain.handle('data:save', (_e, next) => {
@@ -269,6 +304,7 @@ function start() {
 
     createTray();
     createWindow();
+    updates.start();
     setInterval(checkReminders, 30 * 1000);
     checkReminders();
 
