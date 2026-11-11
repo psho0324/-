@@ -11,6 +11,28 @@
 
 현재 홈페이지는 확장 전에도 기존 공개 내용을 읽을 수 있습니다. 새 관리자 저장 기능은 확장 SQL을 완료해야 사용할 수 있습니다. 오류가 나면 권한을 임의로 해제하지 말고 오류 문구를 작업 중인 채팅에 알려 주세요.
 
+## 2026-11-11 갱신: 003을 적용했는지 확인하기
+
+003은 PC 앱 설치와 별개인 홈페이지 서버 검증 보완입니다. 앱이나 홈페이지를 새 버전으로 받아도 Supabase SQL이 자동 실행되지는 않습니다. 이 환경에서는 운영 Supabase 적용 여부를 직접 확인하지 못했으므로 사용자가 SQL Editor에서 확인해야 합니다.
+
+1. **SQL Editor → New query**를 엽니다. 처음 만든 프로젝트는 최신 `schema.sql` → `002_workspace.sql` → `003_validation.sql` 순서로 실행합니다. 이미 002를 실행한 프로젝트는 003 전체만 실행하면 됩니다. 여러 파일을 다시 실행한다면 마지막에 반드시 003을 실행합니다.
+2. 003 실행이 오류 없이 끝나면 아래 **조회 전용** SQL을 새 쿼리에서 실행합니다. 개인 자료를 추가·수정·삭제하지 않습니다.
+
+```sql
+with validation as (
+  select pg_get_functiondef(
+    to_regprocedure('public.workspace_validate(text,jsonb)')
+  ) as definition
+)
+select
+  to_regclass('public.workspace_items') is not null as workspace_v2_ready,
+  coalesce(position('workspace_invalid_field_type' in definition) > 0, false) as strict_field_types,
+  coalesce(position('^[0-9]{4}-[0-9]{2}-[0-9]{2}$' in definition) > 0, false) as canonical_date
+from validation;
+```
+
+결과 세 칸이 모두 `true`이면 v2 테이블과 003의 엄격한 타입/날짜 검증 코드가 설치돼 있음을 확인한 것입니다. 이는 함수 정의 확인이며 모든 운영 기능의 동작 검사를 대신하지 않습니다. `workspace_v2_ready`가 false면 002부터 확인하고, 나머지가 false면 최신 003 전체를 다시 실행합니다. 오류가 나면 원문을 보관하되 비밀번호·비밀 키·개인 자료는 보내지 마세요. 적용 후 관리자 화면을 새로고침해 기존 자료가 표시되는지 확인합니다.
+
 ## 새 프로젝트에서 처음 시작한다면
 
 1. Supabase 프로젝트를 만듭니다. 데이터베이스 비밀번호는 별도로 보관합니다.

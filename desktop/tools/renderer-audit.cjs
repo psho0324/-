@@ -21,11 +21,12 @@ async function scenario(name, fixture, run, native = false) {
   await page.addInitScript(({fixture, native}) => {
     window.__persisted = fixture;
     if (native) {
+      window.plannerApp = { getVersion: async () => '0.1.1' };
       window.storage = {
         load: async () => fixture,
         save: async value => { window.__persisted = value; return true; },
         info: async () => ({ dataFile: 'fixture/planner-data.json' }),
-        listBackups: async () => [{ name: 'backup.json', date: '2026-11-11', time: '120000', counts: {} }],
+        listBackups: async () => [{ name: 'backup.json', date: '2026-11-11', time: '120000', counts: {events: 0, todos: 0, projects: 0} }],
         openFolder: async () => 'Synthetic shell failure',
         openBackupFolder: async () => { throw Error('Synthetic shell failure'); },
         backupNow: async () => { throw Error('Synthetic backup failure'); },
@@ -110,6 +111,29 @@ async function scenario(name, fixture, run, native = false) {
     await page.locator('[data-nav="goals"]').click();
     assert(await page.locator('#projList').evaluate(el=>el.scrollWidth<=el.clientWidth+1));
   });
+  for (const width of [390, 320]) for (const colorScheme of ['light', 'dark']) {
+    await scenario(`Settings controls stay beside their labels at ${width}px ${colorScheme}`, blank(), async page => {
+      await page.setViewportSize({width, height: 850});
+      await page.emulateMedia({colorScheme});
+      await page.locator('[data-nav="settings"]').click();
+      for (const id of ['set-weekStart', 'set-holidays', 'set-notify', 'set-keep', 'set-autostart', 'app-version']) {
+        const layout = await page.locator('#' + id).evaluate(control => {
+          const row = control.closest('.set-row'), label = row.firstElementChild;
+          const a = label.getBoundingClientRect(), b = control.getBoundingClientRect(), r = row.getBoundingClientRect();
+          return {direction: getComputedStyle(row).flexDirection, labelRight: a.right, controlLeft: b.left,
+            controlRight: b.right, rowRight: r.right, centers: Math.abs(a.y + a.height / 2 - b.y - b.height / 2)};
+        });
+        assert.equal(layout.direction, 'row', id + ' moved under its label');
+        assert(layout.controlLeft >= layout.labelRight - 1, id + ' overlaps its label');
+        assert(layout.controlRight <= layout.rowRight + 1, id + ' overflows its row');
+        assert(layout.centers <= 1, id + ' is not vertically centered');
+      }
+      assert(await page.locator('#page-settings').evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'Settings overflow horizontally');
+      const out = path.resolve(__dirname, '../test-results/review-settings');
+      fs.mkdirSync(out, {recursive: true});
+      await page.screenshot({path: path.join(out, `settings-${width}-${colorScheme}.png`), fullPage: true});
+    }, true);
+  }
   await scenario('Rejected native backup/folder/restore calls show recoverable feedback', blank(), async page => {
     await page.locator('[data-nav="settings"]').click();
     await page.locator('#set-folderOpen').click();
@@ -120,6 +144,7 @@ async function scenario(name, fixture, run, native = false) {
     await page.waitForFunction(() => document.querySelector('#set-backupMsg').classList.contains('err'));
     await page.locator('#set-folder').click();
     await page.waitForFunction(() => document.querySelector('#set-folderMsg').classList.contains('err'));
+    assert.match(await page.locator('#set-folderMsg').textContent(), /최근 변경을 보호[\s\S]*다시 시도[\s\S]*내보내/);
     const restore = page.locator('.bk-row button');
     await restore.click(); await restore.click();
     await page.waitForFunction(() => document.querySelector('#set-backupMsg').textContent.includes('복원'));

@@ -56,9 +56,16 @@ function args(hidden = false) {
   return [...(packaged ? [] : ['.']), '--user-data-dir=' + userData, ...(hidden ? ['--hidden'] : []), ...(process.platform === 'linux' ? ['--no-sandbox'] : [])];
 }
 async function launch(hidden = false) {
-  running = await electron.launch({ executablePath: executable, cwd: root, args: args(hidden), timeout: 30000 });
+  running = await electron.launch({ executablePath: executable, cwd: root, args: args(hidden), env: { ...process.env, CI: 'true', PLANNER_DISABLE_AUTO_UPDATE: '1' }, timeout: 30000 });
   const proc = running.process();
   proc.stderr?.on('data', b => report.stderr.push(b.toString()));
+  await running.evaluate(({ session }) => {
+    globalThis.__plannerSmokeUpdateRequests = [];
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://github.com/*', 'https://api.github.com/*'] }, (details, callback) => {
+      globalThis.__plannerSmokeUpdateRequests.push(details.url);
+      callback({ cancel: true });
+    });
+  });
   const actual = await running.evaluate(({ app }) => app.getPath('userData'));
   assert.equal(path.resolve(actual).toLowerCase(), path.resolve(userData).toLowerCase(), 'Electron did not honor isolated --user-data-dir; refusing to touch a default profile');
   const page = await running.firstWindow({ timeout: 20000 });
@@ -72,6 +79,8 @@ async function launch(hidden = false) {
 async function quit() {
   if (!running) return;
   const app = running;
+  const requests = await app.evaluate(() => globalThis.__plannerSmokeUpdateRequests);
+  assert.deepEqual(requests, [], 'Ordinary desktop smoke unexpectedly contacted GitHub');
   const close = app.waitForEvent('close', { timeout: 15000 });
   await app.evaluate(({ app }) => app.quit()).catch(e => {
     if (!/closed|destroyed/i.test(e.message)) throw e;
@@ -257,6 +266,7 @@ async function addTodo(page, title) {
   ]);
   assert.equal(secondExit, 0, secondError);
   assert.equal(await running.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+  report.updaterNetworkIsolation = 'CI disables automatic polling while keeping the Windows updater supported; observed GitHub requests must be zero.';
   report.installedChecklist.singleInstance = 'Verified: second real executable exits and original retains one window.';
   record('Real second process exits; original app keeps one window');
 

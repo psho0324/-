@@ -10,6 +10,9 @@ let store = null;
 let data = null;
 let win = null;
 let tray = null;
+let updates = null;
+let updateState = null;
+const announcedUpdates = new Set(); // 영구 기록 실패 시에도 실행 중 중복을 막습니다.
 let isQuitting = false;
 let sessionEnding = false; // 윈도우 종료/로그오프 중이면 묻지 않고 바로 닫아요
 let quitFlushed = false;   // 종료 전에 "저장 끝남"을 확인했는지
@@ -130,21 +133,106 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
+function refreshTray() {
+  if (!tray) return;
+  const menu = [{ label: '내 플래너 열기', click: showWindow }];
+  if (updateState?.status === 'ready' && updates) {
+    menu.push({
+      label: `새 버전 v${updateState.version} 설치하고 다시 시작`,
+      click: () => { void updates.install().catch(() => showWindow()); },
+    });
+  }
+  menu.push({ type: 'separator' }, { label: '종료', click: () => { isQuitting = true; app.quit(); } });
+  try { tray.setContextMenu(Menu.buildFromTemplate(menu)); }
+  catch { console.error('트레이 메뉴를 갱신하지 못했어요.'); }
+}
+
+// 일정/설정 JSON과 분리한 내부 기록에는 알림을 실제 표시한 버전만 저장합니다.
+function updateNoticeFile() { return path.join(app.getPath('userData'), 'planner-update-notices.json'); }
+function loadUpdateNotices() {
+  try {
+    const value = JSON.parse(fs.readFileSync(updateNoticeFile(), 'utf8'));
+    for (const version of Array.isArray(value.versions) ? value.versions : []) {
+      if (typeof version === 'string' && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) announcedUpdates.add(version);
+    }
+  } catch { /* 읽지 못하면 이번 실행의 Set으로 중복만 억제합니다. */ }
+}
+function rememberUpdateNotice(version) {
+  announcedUpdates.add(version);
+  try {
+    const file = updateNoticeFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ versions: [...announcedUpdates] }), 'utf8');
+    fs.renameSync(file + '.tmp', file);
+  } catch { console.error('업데이트 알림 기록을 저장하지 못했어요.'); }
+}
+
+function announceUpdate(state) {
+  updateState = state;
+  refreshTray();
+  if (win && !win.isDestroyed()) win.webContents.send('updates:state', state);
+  if (state.status !== 'ready' || !state.version || announcedUpdates.has(state.version)) return;
+  if (setting('notifications', true) === false || !Notification.isSupported()) return;
+  announcedUpdates.add(state.version); // 표시 응답을 기다리는 동안 재진입을 억제합니다.
+  let n;
+  let shown = false;
+  try {
+    n = new Notification({
+      title: '내 플래너 업데이트 준비 완료',
+      body: `새 버전 v${state.version}을 받았어요. 설정이나 트레이 메뉴에서 설치하고 다시 시작할 수 있어요.`,
+    });
+    liveNotifications.add(n);
+    n.on('click', showWindow);
+    n.on('close', () => liveNotifications.delete(n));
+    n.on('show', () => { shown = true; rememberUpdateNotice(state.version); });
+    n.on('failed', () => {
+      liveNotifications.delete(n);
+      if (!shown) announcedUpdates.delete(state.version);
+    });
+    n.show();
+  } catch {
+    if (n) liveNotifications.delete(n);
+    if (!shown) announcedUpdates.delete(state.version);
+    console.error('업데이트 준비 알림을 표시하지 못했어요.');
+  }
+}
+
 function createTray() {
   try {
     const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 16, height: 16 });
     tray = new Tray(img);
     tray.setToolTip('내 플래너');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '내 플래너 열기', click: showWindow },
-      { type: 'separator' },
-      { label: '종료', click: () => { isQuitting = true; app.quit(); } },
-    ]));
+    refreshTray();
     tray.on('click', showWindow);
   } catch (e) {
     tray = null; // 트레이를 못 만들면 X 버튼이 그냥 종료하도록 둡니다
     console.error('트레이 생성 실패', e);
   }
+}
+
+// 저장소 생성 자체가 실패해도 앱 데이터 폴더와 복구 경로를 안내할 수 있습니다.
+function startupFailure(error) {
+  const userData = app.getPath('userData');
+  const configFile = path.join(userData, 'planner-config.json');
+  let dataDir = userData;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    if (typeof cfg?.dataDir === 'string' && path.isAbsolute(cfg.dataDir) && fs.statSync(cfg.dataDir).isDirectory()) dataDir = cfg.dataDir;
+  } catch { /* 손상/권한 오류인 설정은 기본 경로만 안내합니다. */ }
+  const dataFile = path.join(dataDir, 'planner-data.json');
+  const backupDir = path.join(userData, 'backups');
+  let message = '앱을 시작하는 중 문제가 발생했어요.';
+  let detail = `앱 데이터 폴더: ${userData}\n앱을 완전히 종료한 뒤 다시 실행해 주세요. 계속되면 공식 설치 파일로 다시 설치하고 앱 버전과 발생 상황을 알려 주세요. 일정 파일은 임의로 삭제하지 마세요.`;
+  let folder = userData;
+  if (error?.code === 'PLANNER_DATA_CORRUPT') {
+    message = '저장 파일이 손상됐고 복구할 정상 백업을 찾지 못했어요.';
+    detail = `원본 파일은 보존했습니다.\n저장 폴더: ${dataDir}\n원본: ${dataFile}\n손상 사본: ${dataFile}.corrupt-*\n백업 폴더: ${backupDir}\n\n앱을 닫고 원본/손상 사본을 다른 곳에 복사한 뒤, 정상 백업 JSON을 ${dataFile} 이름으로 복사하면 복구할 수 있어요. 빈 상태로 시작하려면 원본을 삭제하지 말고 이름을 바꾸세요. 이 경우 백업에 없는 내용은 화면에 나타나지 않습니다.`;
+    folder = dataDir;
+  } else if (error?.code === 'PLANNER_CONFIG_CORRUPT') {
+    message = '저장 위치 설정 파일이 손상됐어요.';
+    detail = `설정과 일정 원본은 보존했습니다.\n설정 파일: ${configFile}\n기본 데이터 폴더: ${userData}\n백업 폴더: ${backupDir}\n\n앱을 닫고 설정 파일을 다른 곳에 복사한 뒤 내용을 복구해 주세요. 파일 이름을 바꾸면 기본 위치로 시작합니다. 사용자 지정 폴더의 일정이 보이지 않으면 설정에서 원래 저장 폴더를 다시 선택하세요. 기존 일정 폴더나 백업은 삭제하지 마세요.`;
+  }
+  return { folder, options: { type: 'error', title: '내 플래너를 시작하지 못했어요', message, detail, buttons: ['폴더 열기', '닫기'], defaultId: 1, cancelId: 1 } };
 }
 
 // ---------- 윈도우 시작 시 자동 실행 ----------
@@ -212,17 +300,16 @@ function start() {
     }
     try { store.backupIfNeeded(); } catch (e) { console.error('자동 백업 실패', e); }
     applyAutoStart();
+    loadUpdateNotices();
 
     handle('app:version', () => app.getVersion());
     const canUpdate = process.platform === 'win32' && app.isPackaged && !process.windowsStore;
     const autoUpdater = canUpdate ? require('electron-updater').autoUpdater : null;
-    const updates = createUpdateController({
+    updates = createUpdateController({
       updater: autoUpdater,
       currentVersion: app.getVersion(),
       disabledReason: process.windowsStore ? 'store' : 'development',
-      notify: state => {
-        if (win && !win.isDestroyed()) win.webContents.send('updates:state', state);
-      },
+      notify: announceUpdate,
       prepareInstall: async () => {
         if (quitChecking || sessionEnding || isQuitting) return 'busy';
         quitChecking = true;
@@ -244,6 +331,7 @@ function start() {
         showWindow();
       },
     });
+    updateState = updates.getState();
     handle('updates:state', () => updates.getState());
     handle('updates:check', () => updates.check());
     handle('updates:install', () => updates.install());
@@ -261,7 +349,7 @@ function start() {
     handle('storage:info', () => store.info());
     handle('storage:openFolder', () => shell.openPath(store.info().dataDir));
     const requireSaved = async () => {
-      if (await flushRenderer() !== true) throw new Error('저장 완료를 확인하지 못했어요. 내용을 저장한 뒤 다시 시도해 주세요.');
+      if (await flushRenderer() !== true) throw new Error('최근 변경 내용을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’를 누르고 저장 폴더의 쓰기 권한을 확인해 주세요. 필요하면 설정의 데이터 백업 내보내기로 현재 내용을 보관한 뒤 다시 시도해 주세요.');
     };
     handle('storage:chooseFolder', async () => {
       await requireSaved();
@@ -328,7 +416,8 @@ function start() {
 
     createTray();
     createWindow();
-    updates.start();
+    // CI 화면 검사는 정기 외부 조회만 생략하고 updater 지원/수동 경로는 유지합니다.
+    if (!(process.env?.CI === 'true' && process.env?.PLANNER_DISABLE_AUTO_UPDATE === '1')) updates.start();
     setInterval(checkReminders, 30 * 1000);
     checkReminders();
 
@@ -345,16 +434,16 @@ function start() {
     }, 2500);
 
     app.on('activate', () => showWindow());
-  }).catch(async () => {
-    // 읽기 실패를 빈 첫 실행으로 처리하면 기존 파일을 덮어쓸 수 있습니다.
+  }).catch(async (error) => {
     try {
-      await dialog.showMessageBox({
-        type: 'error', title: '내 플래너를 시작하지 못했어요',
-        message: '저장 파일을 읽거나 앱을 준비하지 못했어요.',
-        detail: '기존 일정 파일을 지우거나 새 데이터로 덮어쓰지 않았어요. 저장 폴더의 접근 권한과 파일 상태를 확인해 주세요. 계속되면 앱 버전과 재현 상황을 알려 주세요.',
-        buttons: ['닫기'],
-      });
-    } finally { app.exit(1); }
+      const failure = startupFailure(error);
+      const result = await dialog.showMessageBox(failure.options);
+      if (result.response === 0) {
+        try { await shell.openPath(failure.folder); }
+        catch { /* 안내에 표시한 경로를 수동으로 열 수 있습니다. */ }
+      }
+    } catch { console.error('시작 오류 안내를 표시하지 못했어요.'); }
+    finally { app.exit(1); }
   });
 
   // 종료(트레이 "종료", 자동 업데이트 재시작 등): 저장이 끝난 걸 확인한 뒤에 진짜로 종료해요.

@@ -44,6 +44,9 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - name: Install locked Windows dependencies
         run: npm ci --no-audit --no-fund
+      - name: Install Electron using the development setup command
+        shell: cmd
+        run: npx --no-install install-electron
       - name: Check release version
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -154,3 +157,11 @@ jobs:
             --verify-tag --latest \
             --title "내 플래너 $PLANNER_RELEASE_TAG — Windows 테스트 버전" \
             --notes-file desktop/RELEASE_NOTES.md
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLANNER_RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          gh release view "$PLANNER_RELEASE_TAG" --json assets > published-release-assets.json
+          node desktop/tools/verify-release-assets.cjs published-release-assets.json desktop-artifacts/dist

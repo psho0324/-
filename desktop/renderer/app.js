@@ -2072,7 +2072,7 @@
       renderBackupList(await N().backupNow());
       $('#set-backupMsg').textContent = '지금 상태를 백업했어요.';
       $('#set-backupMsg').className = 'set-msg ok';
-    }, '백업하지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    }, '백업하지 못했어요. 저장 실패 표시가 있으면 ‘다시 시도’를 누르고 폴더 쓰기 권한을 확인해 주세요. 변경 내용을 보관하려면 아래 데이터 백업에서 내보내세요.'));
     const folderResult = (r, okText) => {
       const msg = $('#set-folderMsg');
       if (!r || r.canceled || r.same) { msg.textContent = ''; return; }
@@ -2081,8 +2081,8 @@
       msg.textContent = okText;
       msg.className = 'set-msg ok';
     };
-    $('#set-folder').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'), '저장 위치를 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
-    $('#set-folderReset').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().resetFolder(), '기본 위치로 되돌렸어요.'), '기본 위치로 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    $('#set-folder').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'), '저장 위치를 바꾸지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 폴더 쓰기 권한을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.'));
+    $('#set-folderReset').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().resetFolder(), '기본 위치로 되돌렸어요.'), '기본 위치로 바꾸지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 폴더 쓰기 권한을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.'));
     // 다른 PC(동기화 폴더)에서 데이터가 바뀌면 불러옵니다.
     if (window.PlannerNative) {
       window.PlannerNative.onExternalChange((d) => {
@@ -2535,7 +2535,7 @@
           $('#set-backupMsg').textContent = `${fmtBackupLabel(b)} 백업으로 복원했어요.`;
           $('#set-backupMsg').className = 'set-msg ok';
         } catch {
-          $('#set-backupMsg').textContent = '백업을 복원하지 못했어요. 저장 상태와 백업 파일을 확인한 뒤 다시 시도해 주세요.';
+          $('#set-backupMsg').textContent = '백업을 복원하지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 백업 파일을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.';
           $('#set-backupMsg').className = 'set-msg err';
         } finally { btn.disabled = false; }
       });
