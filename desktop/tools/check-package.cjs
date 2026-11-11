@@ -16,7 +16,8 @@ const root = path.resolve(__dirname, '..');
 const archive = path.resolve(process.env.PLANNER_ASAR_PATH || process.argv.slice(2).find(arg => !arg.startsWith('--')) || path.join(root, 'dist/win-unpacked/resources/app.asar'));
 assert(fs.existsSync(archive), 'Missing built archive: ' + archive);
 const entries = asar.listPackage(archive).map(p => p.replace(/^[/\\]+/, '').replace(/\\/g, '/'));
-const files = entries.filter(p => !asar.statFile(archive, p).files);
+// ASAR's lookup API splits on the host separator; keep POSIX only for policy checks.
+const files = entries.filter(p => !asar.statFile(archive, path.normalize(p)).files);
 const required = ['main.js', 'preload.js', 'store.js', 'updater.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css', 'renderer/storage.js', 'renderer/recurrence.js', 'renderer/holidays.js', 'renderer/quickadd.js', 'assets/icon.png', 'assets/icon.ico', 'package.json'];
 for (const file of required) assert(files.includes(file), 'Required runtime file missing: ' + file);
 // Compare runtime dependency names AND versions with npm's installed production tree.
@@ -35,7 +36,7 @@ for (const file of files) {
     for (const match of file.matchAll(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)/g)) {
       const folder = file.slice(0, match.index + match[0].length);
       if (checkedPackages.has(folder)) continue;
-      const dependency = JSON.parse(asar.extractFile(archive, folder + '/package.json'));
+      const dependency = JSON.parse(asar.extractFile(archive, path.normalize(folder + '/package.json')));
       assert.equal(dependency.name, match[1]);
       assert(production.has(dependency.name + '@' + dependency.version), 'Non-production dependency in package: ' + folder);
       checkedPackages.add(folder);
@@ -43,7 +44,7 @@ for (const file of files) {
   } else {
     assert(/^(?:main\.js|preload\.js|store\.js|updater\.js|package\.json|renderer\/.+|assets\/.+)$/.test(file), 'Unexpected app file: ' + file);
     assert(!/preview-seed|README/i.test(file), 'Development data in package: ' + file);
-    if (file !== 'package.json') assert.deepEqual(asar.extractFile(archive, file), fs.readFileSync(path.join(root, file)), 'Packaged source differs: ' + file);
+    if (file !== 'package.json') assert.deepEqual(asar.extractFile(archive, path.normalize(file)), fs.readFileSync(path.join(root, file)), 'Packaged source differs: ' + file);
   }
 }
 const pkg = JSON.parse(asar.extractFile(archive, 'package.json'));
