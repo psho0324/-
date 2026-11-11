@@ -294,6 +294,57 @@ function card(page, id, list = 'project-list') {
     );
     assert(!(await releasedPage.locator('#download-unsigned-notice').isVisible()));
     await released.close();
+    // Previously stored malformed fields must not prevent other public items rendering.
+    // Direct local DB fixtures represent rows saved before strict RPC validation.
+    const savedCalendar = (await db.query("select published from workspace_items where kind='project' and id='calendar'")).rows[0].published;
+    await db.query("update workspace_items set published=jsonb_set(published,'{tags}',$1::jsonb) where kind='project' and id='calendar'", [{bad:'legacy tags'}]);
+    const malformedDates = [20261106, null, '2026-02-30', 'not a date'];
+    for (const [index,date] of malformedDates.entries())
+      await db.query("insert into workspace_items(kind,id,published) values('entry',$1,$2)", [
+        'legacy-invalid-'+index,
+        {projectId:'calendar',date,title:'Legacy entry '+index,summary:'Readable summary',body:'Readable legacy body',images:index===0?123:[null,42]}
+      ]);
+    const malformedContext = await context(), malformedPage = await malformedContext.newPage();
+    await malformedPage.goto(base+'/');
+    await malformedPage.waitForFunction(() => document.querySelector('#project-status').textContent !== '불러오는 중…');
+    assert.equal(await malformedPage.locator('.project-card').count(),1,
+      'Malformed legacy tags must not block project cards');
+    await malformedPage.locator('#tab-journal').click();
+    await malformedPage.waitForFunction(() => document.querySelector('#entry-status').textContent !== '불러오는 중…');
+    for (const index of malformedDates.keys()) {
+      const article=malformedPage.locator('.journal-entry').filter({has:malformedPage.getByRole('heading',{name:'Legacy entry '+index,exact:true})});
+      assert.equal(await article.locator('.journal-date').textContent(),'날짜 확인 필요');
+      await article.locator('summary').click();
+      await article.getByText('Readable legacy body',{exact:true}).waitFor();
+      assert.equal(await article.locator('img').count(),0);
+    }
+    const malformedAdmin = await malformedContext.newPage();
+    await login(malformedAdmin);
+    await malformedAdmin.locator('#dashboard').waitFor();
+    const malformedOriginal=(await db.query("select published from workspace_items where kind='project' and id='calendar'")).rows[0].published;
+    await card(malformedAdmin,'calendar').getByRole('button',{name:'수정',exact:true}).click();
+    await malformedAdmin.waitForTimeout(50);
+    assert.equal(await malformedAdmin.locator('#editor').isVisible(),true,
+      'Malformed stored tags must not prevent opening the administrator editor');
+    assert.match(await malformedAdmin.locator('#editor-error').textContent(),/일부 항목을 표시하지 못했습니다/);
+    assert.equal(await malformedAdmin.locator('#project-tags').inputValue(),'');
+    await malformedAdmin.keyboard.press('Escape');
+    assert.deepEqual((await db.query("select published from workspace_items where kind='project' and id='calendar'")).rows[0].published,malformedOriginal,
+      'Opening and closing malformed data must not rewrite the database');
+    await malformedAdmin.getByRole('tab',{name:'제작 기록 관리'}).click();
+    await card(malformedAdmin,'legacy-invalid-0','entry-list').getByRole('button',{name:'수정',exact:true}).click();
+    await malformedAdmin.locator('#editor').waitFor();
+    assert.match(await malformedAdmin.locator('#editor-error').textContent(),/일부 항목을 표시하지 못했습니다/);
+    assert.equal(await malformedAdmin.locator('#entry-images .attachment').count(),0);
+    await malformedAdmin.keyboard.press('Escape');
+    assert.equal((await db.query("select published->'images' as images from workspace_items where kind='entry' and id='legacy-invalid-0'")).rows[0].images,123);
+    await db.query("update workspace_items set published=jsonb_set(published,'{tags}',$1::jsonb) where kind='project' and id='calendar'", [[null,'Valid legacy tag',{}]]);
+    await malformedPage.reload();
+    await malformedPage.getByText('Valid legacy tag',{exact:true}).waitFor();
+    assert.equal(await malformedPage.locator('.tags span').count(),1);
+    await malformedContext.close();
+    await db.query("update workspace_items set published=$1 where kind='project' and id='calendar'",[savedCalendar]);
+    await db.exec("delete from workspace_items where kind='entry' and id like 'legacy-invalid-%'");
     await db.exec('grant select on public.projects,public.journal_entries to anon,authenticated');
     const previous = await context(),
       previousPage = await previous.newPage();
@@ -617,7 +668,7 @@ function card(page, id, list = 'project-list') {
     assert.equal(ownerPassword, 'new-test-password');
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, obsolete detail response isolation, reverted draft cleanup, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
+      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, obsolete detail response isolation, malformed legacy date/tags/images display and read-only editor warning, reverted draft cleanup, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
     );
   } finally {
     if (browser) await browser.close();

@@ -22,6 +22,15 @@
     return el;
   };
   const label = (value) => categories.find((c) => c.value === value)?.label || value || '기타';
+  // Older/imported records can predate strict server validation. Display defensively
+  // without rewriting or deleting their source data.
+  const stringList = (value) => Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+  function validDate(value) {
+    if (typeof value !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith('0000-')) return false;
+    const timestamp = Date.parse(value + 'T00:00:00Z');
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+  }
+
   const tabs = [...document.querySelectorAll('[role=tab]')];
   function selectTab(tab) {
     tabs.forEach((t) => {
@@ -296,7 +305,7 @@
       const heading = text('h3', project.name);
       body.append(heading, text('p', project.description, 'description'));
       const tags = text('div', '', 'tags');
-      (project.tags || []).forEach((tag) => tags.append(text('span', tag)));
+      stringList(project.tags).forEach((tag) => tags.append(text('span', tag)));
       body.append(tags);
       const actions = text('div', '', 'card-action');
       const download = text('button', '다운로드 ↓');
@@ -346,8 +355,9 @@
     list.replaceChildren();
     for (const entry of states.entry.items) {
       const article = text('article', '', 'journal-entry');
-      const date = text('time', entry.date.replaceAll('-', '. '), 'journal-date');
-      date.dateTime = entry.date;
+      const hasDate = validDate(entry.date);
+      const date = text('time', hasDate ? entry.date.replaceAll('-', '. ') : '날짜 확인 필요', 'journal-date');
+      if (hasDate) date.dateTime = entry.date;
       const content = text('div', '', 'journal-content');
       content.append(
         text(
@@ -371,7 +381,7 @@
             (await getMode()) === 2 ? (await api.publicDetail('entry', entry.id))?.data : entry;
           if (!data) throw Error();
           body.replaceChildren(text('p', data.body, 'entry-body'));
-          for (const image of data.images || [])
+          for (const image of stringList(data.images))
             await addImage(body, image, '제작 기록 첨부 이미지');
           loaded = true;
         } catch {

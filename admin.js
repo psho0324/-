@@ -19,6 +19,7 @@
     form = $('#editor-form');
   const dataOf = (item) => item.draft || item.published || {};
   const titleOf = (item) => dataOf(item).name || dataOf(item).title || '(제목 없음)';
+  const stringList = (value) => Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
   const text = (tag, value, className) => {
     const el = document.createElement(tag);
     el.textContent = value || '';
@@ -173,7 +174,9 @@
       id: item?.id || kind + '-' + crypto.randomUUID(),
       revision: item?.revision || 0
     };
-    images = [...(values.images || [])];
+    const malformedLists = ['tags', 'images'].some((key) => values[key] !== undefined &&
+      (!Array.isArray(values[key]) || values[key].some((value) => typeof value !== 'string')));
+    images = stringList(values.images);
     form.reset();
     lastSave = null;
     $('#editor-error').hidden = true;
@@ -205,7 +208,7 @@
             note: values.note,
             url: values.url,
             image: values.imageUrl,
-            tags: (values.tags || []).join(', '),
+            tags: stringList(values.tags).join(', '),
             order: values.sortOrder || 0
           }
         : kind === 'entry'
@@ -239,6 +242,10 @@
     renderAttachments();
     updateCount();
     baseline = JSON.stringify({ values: snapshot(), images });
+    if (malformedLists) {
+      $('#editor-error').textContent = '저장된 태그나 첨부 이미지의 형식을 확인하지 못해 일부 항목을 표시하지 못했습니다. 원본 자료는 바뀌지 않았습니다. 내용을 확인한 뒤 저장해 주세요.';
+      $('#editor-error').hidden = false;
+    }
   }
   function openEditor(kind, item = null) {
     if (!user) return;
