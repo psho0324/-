@@ -51,7 +51,8 @@ function processes(){
  const config=yaml.load(originalConfig.toString());delete config.owner;delete config.repo;delete config.releaseType;config.provider='generic';config.url='http://127.0.0.1:'+server.address().port;
  // Only this temporary installation uses the test feed. Published installer unchanged.
  fs.writeFileSync(updateConfig,yaml.dump(config));
- const updateEnv={...process.env};delete updateEnv.PLANNER_DISABLE_AUTO_UPDATE;
+ // Manual local-feed checking remains enabled; omit periodic GitHub polling in CI.
+ const updateEnv={...process.env,CI:'true',PLANNER_DISABLE_AUTO_UPDATE:'1'};
  app=await _electron.launch({executablePath:executable,args:[],env:updateEnv,timeout:30000});page=await app.firstWindow();
  await page.waitForFunction(()=>window.storage&&document.querySelector('#homeBody')?.children.length);
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),userData);
