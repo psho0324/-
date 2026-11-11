@@ -1,4 +1,10 @@
 // Inspect the actual packaged application and the NSIS update metadata.
+// Keep CI failures readable from the public job annotations even without log access.
+process.on('uncaughtException', error => {
+  const message = String(error.stack || error.message || error).slice(0, 12000);
+  console.error('::error title=Packaged application validation::' + message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
+  process.exit(1);
+});
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
