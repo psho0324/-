@@ -423,7 +423,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 .todo-sub .dot { width: 7px; height: 7px; margin-right: 5px; vertical-align: 1px; }
 
 /* ---------- 목표 ---------- */
-.goal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; padding-bottom: 16px; }
+.goal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; align-items: start; padding-bottom: 16px; }
 .goal-grid .empty { grid-column: 1 / -1; }
 .proj {
   margin: 0;

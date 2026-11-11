@@ -4,13 +4,16 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_NAME = 'planner-data.json';
-const BACKUP_RE = /^planner-(\d{4}-\d{2}-\d{2})(?:-(\d{6}))?\.json$/; // 자동: 날짜만 / 수동·복원 전: 날짜-시분초
+const BACKUP_RE = /^planner-(\d{4}-\d{2}-\d{2})(?:-(\d{6})(?:-(\d+))?)?\.json$/; // 자동: 날짜만 / 수동·복원 전: 날짜-시분초
 const KEEP_BACKUPS = 20;
 
 const EMPTY = () => ({ events: [], todos: [], projects: [], settings: { defaultView: 'month' } });
 const pad = (n) => String(n).padStart(2, '0');
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeKey = (d) => `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+const isPlannerData = (value) => !!value && typeof value === 'object' && !Array.isArray(value) &&
+  ['events', 'todos', 'projects', 'categories'].every(key => value[key] === undefined || Array.isArray(value[key])) &&
+  (value.settings === undefined || (!!value.settings && typeof value.settings === 'object' && !Array.isArray(value.settings)));
 
 function atomicWrite(file, text) {
   const tmp = file + '.tmp';
@@ -31,7 +34,18 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
   let problem = null;
 
   function readConfig() {
-    try { return JSON.parse(fs.readFileSync(configFile, 'utf-8')) || {}; } catch { return {}; }
+    let text;
+    try { text = fs.readFileSync(configFile, 'utf-8'); }
+    catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
+    let cfg;
+    try { cfg = JSON.parse(text); } catch { /* 아래에서 손상 설정으로 안내합니다. */ }
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) ||
+        (cfg.dataDir !== undefined && (typeof cfg.dataDir !== 'string' || !path.isAbsolute(cfg.dataDir)))) {
+      const error = new Error('저장 위치 설정 파일이 손상되었어요. 기존 설정을 보존하고 실행을 중단합니다.');
+      error.code = 'PLANNER_CONFIG_CORRUPT';
+      throw error;
+    }
+    return cfg;
   }
   function writeConfig(cfg) {
     fs.mkdirSync(userDataDir, { recursive: true });
@@ -72,25 +86,36 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
   }
 
   // 반환: { data, recovered } — recovered는 파일이 깨져서 복구한 백업 이름
-  function load() {
-    const file = dataFile();
+  function readDataFile(file) {
     let text = null;
-    try { text = fs.readFileSync(file, 'utf-8'); } catch { /* 처음 실행 */ }
+    try { text = fs.readFileSync(file, 'utf-8'); } catch (error) {
+      if (error.code !== 'ENOENT') throw error; // 읽기 실패를 첫 실행으로 오인해 덮어쓰지 않습니다.
+    }
     let data = null;
     let recovered = null;
     if (text != null) {
       try { data = JSON.parse(text); } catch { data = null; }
-      if (data == null || typeof data !== 'object' || Array.isArray(data)) {
+      if (!isPlannerData(data)) {
         data = null;
-        try { fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`); } catch { /* 무시 */ }
-        const latest = listBackups()[0];
-        if (latest) {
-          try { data = readBackup(latest.name); recovered = latest.name; } catch { data = null; }
+        fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`);
+        for (const backup of listBackups()) {
+          try { data = readBackup(backup.name); recovered = backup.name; break; } catch { /* 이전의 정상 백업도 확인합니다. */ }
+        }
+        if (!data) {
+          const error = new Error('저장 파일이 손상되었고 복구할 정상 백업이 없어요. 원본 파일은 보존했어요.');
+          error.code = 'PLANNER_DATA_CORRUPT';
+          throw error;
         }
       }
     }
+    return { data: { ...EMPTY(), ...(data || {}) }, recovered, text };
+  }
+
+  function load() {
+    const file = dataFile();
+    const { data, recovered, text } = readDataFile(file);
     remember(file, text);
-    return { data: { ...EMPTY(), ...(data || {}) }, recovered };
+    return { data, recovered };
   }
 
   function save(data) {
@@ -106,12 +131,8 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
     if (lastFile && file !== lastFile && lastText != null) {
       // 저장 위치가 저절로 바뀜(동기화 폴더가 잠시 사라졌다 돌아온 경우 등).
       // 그동안 다른 위치에 쓴 마지막 내용이 새 파일 내용에 덮이지 않도록 백업에 남겨 둡니다.
-      try {
-        fs.mkdirSync(backupDir, { recursive: true });
-        const d = now();
-        fs.writeFileSync(path.join(backupDir, `planner-${dateKey(d)}-${timeKey(d)}.json`), lastText);
-        prune();
-      } catch { /* 백업 실패는 무시 */ }
+      const d = now();
+      writeUniqueBackup(`planner-${dateKey(d)}-${timeKey(d)}.json`, lastText);
       lastFile = file;
       lastSeen = null;
     }
@@ -123,7 +144,7 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
     if (text === lastText) { lastSeen = { mtimeMs: st.mtimeMs, size: st.size }; return null; }
     let data;
     try { data = JSON.parse(text); } catch { return null; } // 아직 쓰는 중일 수 있어 다음에 다시 봅니다
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    if (!isPlannerData(data)) return null;
     lastSeen = { mtimeMs: st.mtimeMs, size: st.size };
     lastText = text;
     return { ...EMPTY(), ...data };
@@ -132,7 +153,7 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
   // ---------- 백업 ----------
   function parseBackupName(name) {
     const m = BACKUP_RE.exec(name);
-    return m ? { date: m[1], time: m[2] || null, key: m[1] + (m[2] || '000000') } : null;
+    return m ? { date: m[1], time: m[2] || null, key: m[1] + (m[2] || '000000') + (m[3] || '0').padStart(12, '0') } : null;
   }
 
   function listBackups() {
@@ -159,7 +180,7 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
   function readBackup(name) {
     if (!parseBackupName(name)) throw new Error('잘못된 백업 이름');
     const d = JSON.parse(fs.readFileSync(path.join(backupDir, name), 'utf-8'));
-    if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('백업 내용이 올바르지 않아요');
+    if (!isPlannerData(d)) throw new Error('백업 내용이 올바르지 않아요');
     return d;
   }
 
@@ -170,12 +191,28 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
     }
   }
 
-  function copyCurrentTo(name) {
+  function writeUniqueBackup(name, text) {
+    fs.mkdirSync(backupDir, { recursive: true });
+    const stem = name.slice(0, -5);
+    for (let index = 0; ; index++) {
+      const candidate = index ? `${stem}-${index}.json` : name;
+      try {
+        fs.writeFileSync(path.join(backupDir, candidate), text, { encoding: 'utf-8', flag: 'wx' });
+        prune();
+        return candidate;
+      } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+  }
+
+  function copyCurrentTo(name, unique = false) {
     const file = dataFile();
     if (!fs.existsSync(file)) return null;
-    try { JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return null; } // 깨진 파일은 백업하지 않음
+    const text = fs.readFileSync(file, 'utf-8'); // 읽기 권한 오류는 호출자에게 알립니다.
+    try { const value = JSON.parse(text); if (!isPlannerData(value)) return null; } catch { return null; } // 깨진 파일은 백업하지 않음
+    if (unique) return writeUniqueBackup(name, text);
     fs.mkdirSync(backupDir, { recursive: true });
-    fs.copyFileSync(file, path.join(backupDir, name));
+    try { fs.writeFileSync(path.join(backupDir, name), text, { encoding: 'utf-8', flag: 'wx' }); }
+    catch (error) { if (error.code === 'EEXIST') return null; throw error; }
     prune();
     return name;
   }
@@ -190,7 +227,7 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
   // 지금 상태를 바로 백업 (시각이 붙은 이름)
   function backupNow() {
     const d = now();
-    return copyCurrentTo(`planner-${dateKey(d)}-${timeKey(d)}.json`);
+    return copyCurrentTo(`planner-${dateKey(d)}-${timeKey(d)}.json`, true);
   }
 
   function restoreBackup(name) {
@@ -217,16 +254,22 @@ function createStore({ userDataDir, now = () => new Date(), keep = KEEP_BACKUPS 
     const ins = inspectDir(dir);
     if (!ins.ok) throw new Error(`이 폴더에는 저장할 수 없어요: ${ins.error}`);
     backupNow(); // 위치를 바꾸기 전, 지금 위치의 데이터를 이 PC에 백업
+    const targetFile = path.join(dir, DATA_NAME);
+    let next, text;
+    if (mode === 'existing' && ins.hasData) {
+      const loaded = readDataFile(targetFile);
+      next = loaded.data; text = loaded.text;
+    } else {
+      next = currentData; text = JSON.stringify(next, null, 2);
+      atomicWrite(targetFile, text);
+    }
+    // 새 위치 읽기/쓰기가 성공한 뒤 설정을 전환합니다.
     const cfg = readConfig();
     if (path.resolve(dir) === path.resolve(userDataDir)) delete cfg.dataDir;
     else cfg.dataDir = dir;
     writeConfig(cfg);
-    lastSeen = null;
-    lastText = null;
-    lastFile = null;
-    if (mode === 'existing' && ins.hasData) return load().data;
-    save(currentData);
-    return currentData;
+    remember(targetFile, text);
+    return next;
   }
 
   return {

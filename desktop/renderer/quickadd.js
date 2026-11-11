@@ -25,6 +25,11 @@
     const out = { kind: null, title: '', date: null, allDay: false, start: null, end: null, categoryId: null, priority: 1, empty: false };
     const take = (re) => { const m = rest.match(re); if (m) rest = rest.replace(m[0], ' '); return m; };
     let force = null;
+    const invalid = () => { out.invalid = true; out.error = '입력한 날짜나 시간을 확인해 주세요. 존재하는 날짜와 0~59분을 사용해 주세요.'; };
+    const validDate = (y, mo, d) => {
+      const candidate = new Date(y, mo - 1, d);
+      return candidate.getFullYear() === y && candidate.getMonth() === mo - 1 && candidate.getDate() === d;
+    };
 
     // 말머리: "할 일:" / "일정:"
     let m = take(/^\s*(할\s*일|일정)\s*[:：]\s*/);
@@ -46,8 +51,9 @@
     const times = [];
     const timeRe = new RegExp(`${MER}?\\s*(\\d{1,2})\\s*(?:시(?!간)(?:\\s*(\\d{1,2})\\s*분|\\s*(반))?|:(\\d{2}))`, 'g');
     rest = rest.replace(timeRe, (all, mer, h, mm, half, colon) => {
-      if (Number(h) > 24) return all;
-      times.push({ mer, h: Number(h), min: colon ? Number(colon) : mm ? Number(mm) : half ? 30 : 0, colon: !!colon });
+      const hour = Number(h), minute = colon ? Number(colon) : mm ? Number(mm) : half ? 30 : 0;
+      if (hour > 24 || minute > 59 || (hour === 24 && (minute !== 0 || mer)) || (mer && hour > 12)) { invalid(); return all; }
+      times.push({ mer, h: hour, min: minute, colon: !!colon });
       return ' ';
     });
     let startMin = null;
@@ -71,12 +77,15 @@
     // ---- 날짜
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     let date = null;
-    const setYMD = (y, mo, d) => { date = new Date(y, mo - 1, d); };
+    const setYMD = (y, mo, d) => { if (!validDate(y, mo, d)) invalid(); else date = new Date(y, mo - 1, d); };
     const nextMD = (mo, d) => { // 연도가 없으면 오늘 이후로 가장 가까운 날
-      let y = today.getFullYear();
-      let c = new Date(y, mo - 1, d);
-      if (c < today) c = new Date(y + 1, mo - 1, d);
-      date = c;
+      if (mo < 1 || mo > 12 || d < 1 || d > 31) { invalid(); return; }
+      for (let year = today.getFullYear(); year <= today.getFullYear() + 8; year++) {
+        if (!validDate(year, mo, d)) continue;
+        const candidate = new Date(year, mo - 1, d);
+        if (candidate >= today) { date = candidate; return; }
+      }
+      invalid();
     };
     if ((m = take(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) setYMD(+m[1], +m[2], +m[3]);
     else if ((m = take(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/))) nextMD(+m[1], +m[2]);
@@ -88,16 +97,22 @@
       date = addDays(base, DOW.indexOf(m[2]));
     } else if ((m = take(/(이번|다음)\s*달\s*(\d{1,2})\s*일/))) {
       const mo = today.getMonth() + (m[1] === '다음' ? 1 : 0);
-      date = new Date(today.getFullYear(), mo, +m[2]);
+      const targetMonth = new Date(today.getFullYear(), mo, 1);
+      setYMD(targetMonth.getFullYear(), targetMonth.getMonth() + 1, +m[2]);
     } else if ((m = take(/(^|\s)(다음\s*주)(?=\s|$)/))) date = addDays(today, 7);
     else if ((m = take(/([일월화수목금토])\s*요일/))) {
       const diff = (DOW.indexOf(m[1]) - today.getDay() + 7) % 7;
       date = addDays(today, diff);
     } else if ((m = take(/(^|\s)(\d{1,2})[/.](\d{1,2})(?!\s*[시분\d:])(?=\s|$)/))) nextMD(+m[2], +m[3]);
     else if ((m = take(/(^|\s)(\d{1,2})\s*일(?=\s|$|에)/))) {
-      let c = new Date(today.getFullYear(), today.getMonth(), +m[2]);
-      if (c < today) c = new Date(today.getFullYear(), today.getMonth() + 1, +m[2]);
-      date = c;
+      const day = +m[2];
+      if (day < 1 || day > 31) invalid();
+      else for (let offset = 0; offset <= 12; offset++) {
+        const month = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+        if (!validDate(month.getFullYear(), month.getMonth() + 1, day)) continue;
+        const candidate = new Date(month.getFullYear(), month.getMonth(), day);
+        if (candidate >= today) { date = candidate; break; }
+      }
     }
 
     // ---- 제목 정리: 남은 조사·연결 기호 제거
@@ -109,6 +124,8 @@
     out.title = title;
     out.empty = !title;
 
+    if ((date && !Number.isFinite(date.getTime())) || (dur != null && !Number.isFinite(dur))) invalid();
+    if (out.invalid) { out.title = String(input || '').trim(); return out; }
     const hasTime = startMin != null;
     out.kind = force || (out.allDay || hasTime ? 'event' : 'todo');
     if (out.kind === 'event') {
@@ -121,6 +138,7 @@
         const len = endMin != null ? endMin - startMin : dur != null ? dur : 60;
         const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, startMin);
         const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, startMin + Math.max(5, len));
+        if (!Number.isFinite(s.getTime()) || !Number.isFinite(e.getTime()) || e.getFullYear() > 9999) { invalid(); return out; }
         const f = (x) => `${key(x)}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
         out.start = f(s);
         out.end = f(e);

@@ -203,4 +203,78 @@ test('폴더 검사: 쓸 수 없는 경로는 오류', () => {
   assert.throws(() => s.useDir(path.join(bad, 'sub'), 'current', sample(1)));
 });
 
+test('같은 초의 수동 백업은 서로 덮어쓰지 않음', () => {
+  const dir = tmp(), s = mk(dir);
+  s.save(sample(1)); const first = s.backupNow();
+  s.save(sample(2)); const second = s.backupNow();
+  assert.notStrictEqual(first, second);
+  assert.strictEqual(s.listBackups().length, 2);
+  assert.strictEqual(s.listBackups().find(b => b.name === first).counts.events, 1);
+  assert.strictEqual(s.listBackups()[0].counts.events, 2);
+});
+
+test('같은 초에 복원해도 선택한 백업과 복원 직전 내용을 모두 보존', () => {
+  const s = mk(tmp());
+  s.save(sample(1)); const selected = s.backupNow();
+  s.save(sample(3)); s.restoreBackup(selected);
+  assert.strictEqual(s.listBackups().find(b => b.name === selected).counts.events, 1);
+  assert(s.listBackups().some(b => b.counts.events === 3));
+  assert.strictEqual(s.load().data.events.length, 1);
+});
+
+test('최신 백업이 깨졌어도 그 이전의 정상 백업으로 복구', () => {
+  const dir = tmp(), s = mk(dir);
+  s.save(sample(2)); s.backupIfNeeded();
+  fs.writeFileSync(path.join(dir,'backups','planner-2099-01-01.json'), 'broken');
+  fs.writeFileSync(path.join(dir,'planner-data.json'), 'broken');
+  const restored = s.load();
+  assert.strictEqual(restored.data.events.length, 2);
+  assert.strictEqual(restored.recovered, 'planner-2026-11-04.json');
+});
+
+test('새 저장 위치에 쓰기 실패하면 기존 저장 위치를 유지', () => {
+  const home=tmp(), cloud=tmp(), s=mk(home);
+  s.save(sample(2));
+  fs.mkdirSync(path.join(cloud,'planner-data.json'));
+  assert.throws(() => s.useDir(cloud,'current',sample(3)));
+  assert.strictEqual(s.info().dataDir, home);
+  assert.strictEqual(mk(home).load().data.events.length, 2);
+});
+
+test('첫 실행 이외의 파일 읽기 오류를 빈 데이터로 숨기지 않음', () => {
+  const home=tmp(), s=mk(home);
+  fs.mkdirSync(path.join(home,'planner-data.json'));
+  assert.throws(() => s.load());
+});
+
+test('손상 데이터와 정상 백업이 없으면 빈 데이터로 계속하지 않음', () => {
+  const home=tmp(), s=mk(home), file=path.join(home,'planner-data.json');
+  fs.writeFileSync(file,'broken');
+  assert.throws(() => s.load(), error => error.code === 'PLANNER_DATA_CORRUPT');
+  assert.strictEqual(fs.readFileSync(file,'utf8'),'broken');
+  assert(fs.readdirSync(home).some(name=>name.includes('.corrupt-')));
+});
+
+test('손상된 저장 위치 설정을 기본 위치로 조용히 대체하지 않음', () => {
+  for (const bad of ['broken','null','[]','{"dataDir":17}']) {
+    const home=tmp(), config=path.join(home,'planner-config.json');
+    fs.writeFileSync(config,bad);
+    assert.throws(() => mk(home).load(), error => error.code === 'PLANNER_CONFIG_CORRUPT');
+    assert.strictEqual(fs.readFileSync(config,'utf8'),bad);
+    assert(!fs.existsSync(path.join(home,'planner-data.json')));
+  }
+});
+
+test('배열 형태가 손상된 외부 파일과 백업을 사용하지 않음', () => {
+  const home=tmp(), s=mk(home);
+  s.save(sample(1));s.backupIfNeeded();
+  const malformed=JSON.stringify({events:'not-an-array',todos:[],projects:[],settings:{}});
+  fs.writeFileSync(path.join(home,'planner-data.json'),malformed);
+  assert.strictEqual(s.checkExternal(),null);
+  fs.writeFileSync(path.join(home,'backups','planner-2099-01-01.json'),malformed);
+  const loaded=s.load();
+  assert.strictEqual(loaded.data.events.length,1);
+  assert.strictEqual(loaded.recovered,'planner-2026-11-04.json');
+});
+
 console.log(`\n${passed} passed`);

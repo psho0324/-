@@ -19,6 +19,9 @@ const fs = require('node:fs'),
   );
   await db.exec(migration);
   await db.exec(migration);
+  const validation = fs.readFileSync(path.join(__dirname, '../supabase/migrations/003_validation.sql'), 'utf8');
+  await db.exec(validation);
+  await db.exec(validation);
   await db.exec(
     `insert into site_admins values('${owner}');set request.jwt.claim.sub='${owner}';set role authenticated;`
   );
@@ -41,6 +44,27 @@ const fs = require('node:fs'),
     showInProjects: true,
     sortOrder: 0
   };
+  // Malformed imports/API payloads must not publish values that crash the renderer.
+  const badProjects = [
+    { ...project, name: { text: 'Object title' } },
+    { ...project, description: ['Array intro'] },
+    { ...project, sortOrder: '2' },
+    { ...project, showInProjects: 'true' },
+    { ...project, mobilePlanned: 'false' },
+    { ...project, url: 123 },
+    { ...project, downloadUrl: ['https://example.test/app.exe'] },
+    { ...project, downloadPlatform: 1 },
+    { ...project, downloadVersion: {} },
+    { ...project, tags: [null] },
+    { ...project, images: [null] }
+  ];
+  for (const data of badProjects)
+    await assert.rejects(rpc('workspace_save', ['project', 'invalid-' + token(), 0, data, true, token()]));
+  const validEntry = { projectId: 'calendar', date: '2026-11-06', title: 'Entry', summary: 'Summary', body: 'Body', images: [] };
+  for (const date of [20261106, 'infinity', '2026-1-2', '2026-02-30', null])
+    await assert.rejects(rpc('workspace_save', ['entry', 'invalid-' + token(), 0, { ...validEntry, date }, true, token()]));
+  await assert.rejects(rpc('workspace_save', ['entry', 'invalid-' + token(), 0, { ...validEntry, title: ['Title'] }, true, token()]));
+  await assert.rejects(rpc('workspace_save', ['idea', 'invalid-' + token(), 0, { title: {}, summary: 'Summary', stage: 'idea' }, true, token()]));
   const request = token();
   let saved = await rpc('workspace_save', ['project', 'all', 0, project, false, request]);
   assert.equal(saved.revision, 1);
@@ -168,9 +192,23 @@ const fs = require('node:fs'),
   invalid.items.push({ kind: 'project', id: 'invalid', draft: { name: '' } });
   await assert.rejects(rpc('workspace_import', [invalid, token()]));
   assert.equal((await rpc('workspace_admin_list')).total, before);
+  const invalidDateBackup = structuredClone(backup);
+  const importedEntry = invalidDateBackup.items.find((item) => item.kind === 'entry');
+  const entryData = importedEntry.draft || importedEntry.published;
+  entryData.date = 20261106;
+  await assert.rejects(rpc('workspace_import', [invalidDateBackup, token()]));
+  assert.equal((await rpc('workspace_admin_list')).total, before);
+  // Re-running the original setup after v2 must not expose stale legacy copies.
+  await rpc('workspace_action', ['project', 'calendar', 1, 'unpublish', token(), null]);
+  await db.exec('reset role');
+  await db.exec(fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8'));
+  await db.exec("set request.jwt.claim.sub='';set role anon");
+  assert.equal(await rpc('workspace_public_detail', ['project', 'calendar']), null);
+  await assert.rejects(db.query('select * from public.projects'), /permission denied/);
+  await assert.rejects(db.query('select * from public.journal_entries'), /permission denied/);
   await db.close();
   console.log(
-    'PASS: v2 migration preservation and repeatability, request idempotency, revision conflicts, public/draft separation, parent visibility, pagination, reserved all ID, trash/restore/history, transactional backup import, anonymous and non-admin denial.'
+    'PASS: v2 migration preservation and repeatability, request idempotency, revision conflicts, public/draft separation, parent visibility, pagination, reserved all ID, trash/restore/history, transactional backup import, strict scalar/date/media types, legacy permission guard, anonymous and non-admin denial.'
   );
 })().catch((e) => {
   console.error(e);

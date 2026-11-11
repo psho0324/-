@@ -5,19 +5,21 @@
 ## 현재 상태와 작업 범위
 
 - 기존 `main.js`, `preload.js`, `store.js`, `renderer/`의 앱 기능은 유지합니다. 이 작업에서는 패키징·검사·배포 설정을 추가했습니다.
-- `package-lock.json`과 NSIS 설정, 저장소 루트의 `.github/workflows/desktop.yml`을 사용합니다. 도구 버전은 Electron **33.4.11**, electron-builder **26.18.0**, Playwright **1.58.2**로 고정했습니다.
+- `package-lock.json`과 NSIS 설정, 저장소 루트의 `.github/workflows/desktop.yml`을 사용합니다. 도구 버전은 Electron **45.3.0**, electron-builder **26.18.0**, Playwright **1.58.2**로 고정했습니다.
 - **코드 서명은 없습니다. 자동 업데이트는 0.1.1 후보에 추가했으며 Windows 설치·갱신 검증은 대기 중입니다.** 이 배포는 Windows 10/11 **64비트 테스트 버전**입니다.
 - Windows CI에서 원본 테스트 5개, NSIS 빌드·설치, 실제 설치 앱의 자동 검사 7개 그룹을 통과했고 `v0.1.0` Release를 공개했습니다. OS의 실제 알림·트레이 표시, 로그인·로그오프, 실제 클라우드 폴더 동기화는 사용자 PC에서 추가 확인해야 합니다. 근거는 [검증 기록](VERIFICATION.md)에 구분했습니다.
 
 현재 브랜치의 소스 버전은 **0.1.1 후보**이며 공개 Release는 **v0.1.0**입니다. 코드 준비와 배포는 구분합니다.
 
+이번 전체 감사 결과와 수정·미확인 항목은 [2026-11-11 전체 감사](../AUDIT-2026-11-11.md)에 기록했습니다. 최신 소스의 Windows 검사 결과와 과거 0.1.0의 통과 기록은 구분합니다.
+
 ## 개발 실행
 
-필요한 것: Windows 10/11 64비트, Node.js 22 LTS. 아래 명령은 이 `desktop/` 폴더에서 실행합니다.
+필요한 것: Windows 10/11 64비트, Node.js 22.12 이상(22 LTS 권장). 아래 명령은 이 `desktop/` 폴더에서 실행합니다.
 
 ```bash
 npm ci         # 커밋된 package-lock.json과 같은 의존성 설치
-npm test       # 원본 5개 + 업데이트 테스트 2개 실행
+npm test       # 원본 5개 + 업데이트 2개 + 실행 안전성 1개 검사
 npm start      # electron . 으로 실제 앱 실행
 ```
 
@@ -30,8 +32,9 @@ npm start      # electron . 으로 실제 앱 실행
 ## 테스트
 
 ```bash
-npm test                 # Node 테스트 7개 파일, Electron 실행 불필요
+npm test                 # Node 테스트 8개 파일, Electron 실행 불필요
 npm run test:desktop     # 실제 Electron 창과 저장 경로 자동 검사
+npm run test:renderer    # 실제 HTML/CSP 화면 회귀 검사(Chromium 필요)
 npm run dist:win         # Windows NSIS 설치 파일 제작
 npm run test:package     # 패키지의 코드·아이콘·preload 경로와 불필요한 파일 검사
 ```
@@ -91,7 +94,7 @@ npm run test:package
 
 저장소 루트 `.github/workflows/desktop.yml`은 `windows-latest`에서 아래 순서로 실행하도록 구성합니다.
 
-1. 잠금 파일로 설치(`npm ci`) 후 원본 5개 및 업데이트 테스트 2개 실행
+1. 잠금 파일로 설치(`npm ci`) 후 원본 5개·업데이트 2개·실행 안전성 1개 검사
 2. 실제 Electron 실행 검사(`tools/desktop-smoke.cjs`)
 3. NSIS 설치 파일 빌드 후 패키지 파일 검사(`tools/check-package.cjs`)
 4. NSIS 무인 설치 후 설치된 `MyPlanner.exe` 실행 검사

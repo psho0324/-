@@ -178,6 +178,7 @@ function card(page, id, list = 'project-list') {
   );
   await db.exec(fs.readFileSync(path.join(root, 'supabase/schema.sql'), 'utf8'));
   await db.exec(fs.readFileSync(path.join(root, 'supabase/migrations/002_workspace.sql'), 'utf8'));
+  await db.exec(fs.readFileSync(path.join(root, 'supabase/migrations/003_validation.sql'), 'utf8'));
   await db.exec(`insert into site_admins values('${owner}')`);
   server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://localhost'),
@@ -373,6 +374,46 @@ function card(page, id, list = 'project-list') {
       .waitFor();
     assert.match(publicPage.url(), /project=all/);
     await publicPage.keyboard.press('Escape');
+    // Closing one detail and opening another must discard the old error response.
+    await publicPage.evaluate(() => {
+      const api = window.WorkspaceBackend;
+      window.auditOriginalDetail = api.publicDetail;
+      api.publicDetail = (kind, id) => id === 'calendar'
+        ? new Promise((_resolve, reject) => { window.auditRejectDetail = reject; })
+        : window.auditOriginalDetail(kind, id);
+    });
+    await publicPage.locator('.project-card').filter({ has: publicPage.getByRole('heading', { name: '캘린더 앱', exact: true }) }).getByRole('button', { name: '소개 보기' }).click();
+    await publicPage.waitForFunction(() => !!window.auditRejectDetail);
+    await publicPage.keyboard.press('Escape');
+    await projectCard.getByRole('button', { name: '소개 보기' }).click();
+    await publicPage.getByText('Detailed description that stays reachable', { exact: true }).waitFor();
+    await publicPage.evaluate(() => window.auditRejectDetail(new Error('Old project request failed')));
+    await publicPage.waitForTimeout(50);
+    assert.equal(await publicPage.locator('#detail-status').textContent(), '',
+      'Old project error must not overwrite the current project');
+    await publicPage.keyboard.press('Escape');
+    // The same guard is required while an old project's image is resolving.
+    await publicPage.evaluate(() => {
+      const api = window.WorkspaceBackend;
+      window.auditOriginalImage = api.resolveImage;
+      api.publicDetail = (kind, id) => id === 'calendar'
+        ? Promise.resolve({data:{name:'Old image project',description:'Old description',note:'Old note',imageUrl:'https://example.test/old.png'}})
+        : window.auditOriginalDetail(kind,id);
+      api.resolveImage = value => value === 'https://example.test/old.png'
+        ? new Promise(resolve => { window.auditResolveImage = resolve; })
+        : window.auditOriginalImage(value);
+    });
+    await publicPage.locator('.project-card').filter({ has: publicPage.getByRole('heading', { name: '캘린더 앱', exact: true }) }).getByRole('button', { name: '소개 보기' }).click();
+    await publicPage.waitForFunction(() => !!window.auditResolveImage);
+    await publicPage.keyboard.press('Escape');
+    await projectCard.getByRole('button', { name: '소개 보기' }).click();
+    await publicPage.getByText('Detailed description that stays reachable', { exact: true }).waitFor();
+    await publicPage.evaluate(() => window.auditResolveImage('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'));
+    await publicPage.waitForTimeout(50);
+    assert.equal(await publicPage.locator('#dialog-images img').count(), 0,
+      'Old project image must not appear in another project');
+    await publicPage.evaluate(() => { window.WorkspaceBackend.publicDetail=window.auditOriginalDetail;window.WorkspaceBackend.resolveImage=window.auditOriginalImage; });
+    await publicPage.keyboard.press('Escape');
     await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
     assert.equal(
       await page.locator('#download-url').inputValue(),
@@ -389,6 +430,15 @@ function card(page, id, list = 'project-list') {
       await publicPage.getByRole('heading', { name: 'Unreleased title', exact: true }).count(),
       0
     );
+    // Reverting every edit must remove the stale browser draft instead of resurrecting it.
+    await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
+    const originalDescription = await page.locator('#project-description').inputValue();
+    await page.locator('#project-description').fill('Cancelled temporary change');
+    await page.locator('#project-description').fill(originalDescription);
+    await page.keyboard.press('Escape');
+    await page.locator('#editor').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#resume-banner').isVisible(), false,
+      'Reverted edits must not leave an obsolete recoverable draft');
     // Unsaved content survives cancellation, reload and resume.
     await card(page, 'all').getByRole('button', { name: '수정', exact: true }).click();
     await page.locator('#project-description').fill('Unsaved local writing');
@@ -567,7 +617,7 @@ function card(page, id, list = 'project-list') {
     assert.equal(ownerPassword, 'new-test-password');
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
+      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, obsolete detail response isolation, reverted draft cleanup, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
     );
   } finally {
     if (browser) await browser.close();

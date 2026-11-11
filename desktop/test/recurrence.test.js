@@ -56,4 +56,23 @@ const days = (occs) => occs.map((o) => fmtDate(o.start));
   assert.strictEqual(r.length, 2); // 10/9 23:00 시작분 + 10/10 23:00 시작분
 }
 
+// 8) 서머타임 전환일에 시작한 종일 반복도 매일 자정까지 유지
+{
+  const originalTZ = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    for (const [start, day] of [['2026-03-08', [2026,2,9]], ['2026-11-01', [2026,10,2]]]) {
+      const ev = {id:'dst',allDay:true,start,end:start,repeat:'daily'};
+      const after = new Date(...day,23,30), before = new Date(...day,23,45);
+      const list = occurrencesInRange(ev,after,before);
+      assert.strictEqual(list.length,1);
+      assert.strictEqual(list[0].end.getHours(),0);
+      assert.strictEqual(list[0].end.getDate(),day[2]+1);
+      const midnight = new Date(...day);
+      const firstHour = occurrencesInRange(ev,midnight,new Date(...day,0,30));
+      assert.strictEqual(firstHour.length,1,'어제 종일 일정이 다음날까지 넘치면 안 됨');
+    }
+  } finally { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; }
+}
+
 console.log('recurrence tests passed');

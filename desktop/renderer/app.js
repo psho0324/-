@@ -50,7 +50,7 @@
     (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   // 한국 공휴일(설정에서 끌 수 있어요). 없으면 null.
   const holiday = (day) => (data.settings.holidays !== false && window.Holidays ? window.Holidays.info(fmtDate(day)) : null);
-  const weekStart = () => Number(data.settings.weekStart ?? 0);
+  const weekStart = () => Number(data.settings.weekStart) === 1 ? 1 : 0;
   const shortDate = (s) => { const [, m, d] = s.split('-'); return `${+m}/${+d}`; };
 
   function h(tag, props, ...kids) {
@@ -1016,7 +1016,7 @@
         });
         save();
         render();
-        const again = document.querySelector(`[data-padd="${p.id}"]`);
+        const again = [...document.querySelectorAll('[data-padd]')].find((el) => el.dataset.padd === p.id);
         if (again) again.focus();
       },
     }, input);
@@ -1368,8 +1368,9 @@
     const box = $('#quickPreview');
     const r = quickResult();
     document.querySelectorAll('[data-qkind]').forEach((b) => b.classList.toggle('active', b.dataset.qkind === state.quickKind));
-    $('#quickOk').disabled = r.empty;
+    $('#quickOk').disabled = r.empty || !!r.invalid;
     box.replaceChildren();
+    if (r.invalid) { box.append(h('span', { class: 'error', text: r.error || '날짜와 시간을 확인해 주세요.' })); return; }
     if (r.empty) { box.append(h('span', { class: 'muted', text: '내용을 입력하면 어떻게 만들어질지 여기에 보여 드려요.' })); return; }
     const d = describeQuick(r);
     box.append(h('span', { class: 'qk ' + r.kind, text: d.kindLabel }), h('b', { text: r.title }), h('span', { class: 'muted', text: d.text }));
@@ -1386,7 +1387,7 @@
 
   function submitQuick() {
     const r = quickResult();
-    if (r.empty) return;
+    if (r.empty || r.invalid) return;
     const snap = takeSnapshot();
     if (r.kind === 'event') {
       const cat = r.categoryId ? catById(r.categoryId) : null;
@@ -1429,8 +1430,9 @@
       if (t.done && typeof t.completedAt === 'number') { const k = fmtDate(new Date(t.completedAt)); todos[k] = (todos[k] || 0) + 1; }
     }
     for (const ev of data.events) {
-      for (const [key, v] of Object.entries(ev.doneOn || {})) {
-        const k = typeof v === 'number' && v > 1e11 ? fmtDate(new Date(v)) : key;
+      for (const v of Object.values(ev.doneOn || {})) {
+        if (typeof v !== 'number' || !Number.isFinite(v) || v <= 1e11) continue;
+        const k = fmtDate(new Date(v));
         events[k] = (events[k] || 0) + 1;
       }
     }
@@ -1810,6 +1812,16 @@
       setOccDone(obj, editing.occDate, $('#ev-done').checked);
     }
 
+    // 비반복 일정의 날짜를 편집해 옮겨도 완료 표시를 새 날짜로 옮깁니다.
+    if (editing.ev && !isRepeating(editing.ev) && repeat === 'none') {
+      const oldKey = editing.ev.start.slice(0, 10);
+      const newKey = start.slice(0, 10);
+      if (oldKey !== newKey && obj.doneOn[oldKey]) {
+        obj.doneOn[newKey] = obj.doneOn[oldKey];
+        delete obj.doneOn[oldKey];
+      }
+    }
+
     const i = data.events.findIndex((e) => e.id === obj.id);
     if (i >= 0) data.events[i] = obj;
     else data.events.push(obj);
@@ -2039,14 +2051,28 @@
     $('#set-keep').addEventListener('change', (e) => { data.settings.keepRunning = e.target.checked; save(); });
     $('#set-autostart').addEventListener('change', (e) => { data.settings.autoStart = e.target.checked; save(); });
     const N = () => window.PlannerNative;
-    $('#set-folderOpen').addEventListener('click', () => N() && N().openFolder());
-    $('#set-backupOpen').addEventListener('click', () => N() && N().openBackupFolder());
-    $('#set-backupNow').addEventListener('click', async () => {
-      if (!N()) return;
+    // OS/파일 작업이 실패하면 화면에 안내하고 버튼을 다시 사용할 수 있게 합니다.
+    const nativeAction = async (button, messageId, action, failure) => {
+      if (!N() || button.disabled) return;
+      button.disabled = true;
+      try { await action(); }
+      catch {
+        const msg = $(messageId);
+        msg.textContent = failure;
+        msg.className = 'set-msg err';
+      } finally { button.disabled = false; }
+    };
+    $('#set-folderOpen').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => {
+      if (await N().openFolder()) throw new Error('Open folder failed');
+    }, '저장 폴더를 열지 못했어요. 폴더가 있는지 확인한 뒤 다시 시도해 주세요.'));
+    $('#set-backupOpen').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-backupMsg', async () => {
+      if (await N().openBackupFolder()) throw new Error('Open backup folder failed');
+    }, '백업 폴더를 열지 못했어요. 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    $('#set-backupNow').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-backupMsg', async () => {
       renderBackupList(await N().backupNow());
       $('#set-backupMsg').textContent = '지금 상태를 백업했어요.';
       $('#set-backupMsg').className = 'set-msg ok';
-    });
+    }, '백업하지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
     const folderResult = (r, okText) => {
       const msg = $('#set-folderMsg');
       if (!r || r.canceled || r.same) { msg.textContent = ''; return; }
@@ -2055,8 +2081,8 @@
       msg.textContent = okText;
       msg.className = 'set-msg ok';
     };
-    $('#set-folder').addEventListener('click', async () => folderResult(N() && await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'));
-    $('#set-folderReset').addEventListener('click', async () => folderResult(N() && await N().resetFolder(), '기본 위치로 되돌렸어요.'));
+    $('#set-folder').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'), '저장 위치를 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    $('#set-folderReset').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().resetFolder(), '기본 위치로 되돌렸어요.'), '기본 위치로 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
     // 다른 PC(동기화 폴더)에서 데이터가 바뀌면 불러옵니다.
     if (window.PlannerNative) {
       window.PlannerNative.onExternalChange((d) => {
@@ -2075,7 +2101,8 @@
       const f = e.target.files[0];
       e.target.value = '';
       if (!f) return;
-      $('#set-importBox').value = await f.text();
+      try { $('#set-importBox').value = await f.text(); }
+      catch { setMsg('파일을 읽지 못했어요. 파일을 다시 선택해 주세요.', 'err'); return; }
       resetImportBtn();
       const r = parseBackup($('#set-importBox').value);
       setMsg(r.error || `${f.name}: ${summaryOf(r.obj)} — "가져오기"를 누르세요.`, r.error ? 'err' : '');
@@ -2284,6 +2311,7 @@
         ...e,
         id: strOrNull(e.id) || uid(),
         title: typeof e.title === 'string' ? e.title : '',
+        memo: typeof e.memo === 'string' ? e.memo : '',
         allDay: !!e.allDay && e.start.length === 10,
         end: okDateTime(e.end) && e.end.length === e.start.length ? e.end : e.start,
         categoryId: strOrNull(e.categoryId),
@@ -2291,7 +2319,7 @@
         repeatInterval: Math.max(1, parseInt(e.repeatInterval, 10) || 1),
         repeatUntil: okDate(e.repeatUntil) ? e.repeatUntil : null,
         exceptions: list(e.exceptions).filter(okDate),
-        doneOn: isObj(e.doneOn) ? e.doneOn : {},
+        doneOn: isObj(e.doneOn) ? Object.fromEntries(Object.entries(e.doneOn).filter(([key, value]) => okDate(key) && (value === true || (typeof value === 'number' && Number.isFinite(value) && value > 0)))) : {},
         reminder: typeof e.reminder === 'number' && e.reminder >= 0 ? e.reminder : null,
       };
     });
@@ -2299,6 +2327,7 @@
       ...t,
       id: strOrNull(t.id) || uid(),
       title: typeof t.title === 'string' ? t.title : '',
+      memo: typeof t.memo === 'string' ? t.memo : '',
       done: !!t.done,
       due: okDate(t.due) ? t.due : null,
       priority: [0, 1, 2].includes(t.priority) ? t.priority : 1,
@@ -2309,6 +2338,7 @@
       ...p,
       id: strOrNull(p.id) || uid(),
       title: typeof p.title === 'string' ? p.title : '',
+      memo: typeof p.memo === 'string' ? p.memo : '',
       status: p.status === 'done' ? 'done' : 'active',
       due: okDate(p.due) ? p.due : null,
       categoryId: strOrNull(p.categoryId),
@@ -2326,12 +2356,14 @@
       todos: clean.todos,
       projects: clean.projects,
       categories: cats,
-      settings: isObj(loaded && loaded.settings) ? loaded.settings : {},
+      settings: isObj(loaded && loaded.settings) ? { ...loaded.settings } : {},
     };
     // 일정 완료 체크는 처음 켠 날부터 셉니다. (그 전의 지난 일정이 한꺼번에 밀린 일로 뜨지 않도록)
-    if (!data.settings.taskTrackingSince) data.settings.taskTrackingSince = fmtDate(new Date());
+    if (!okDate(data.settings.taskTrackingSince)) data.settings.taskTrackingSince = fmtDate(new Date());
+    data.settings.weekStart = weekStart();
     const valid = new Set([NONE, ...cats.map((c) => c.id)]);
-    state.hidden = new Set((data.settings.hiddenCategories || []).filter((k) => valid.has(k)));
+    state.hidden = new Set((Array.isArray(data.settings.hiddenCategories) ? data.settings.hiddenCategories : []).filter((k) => valid.has(k)));
+    data.settings.hiddenCategories = [...state.hidden];
     if (['month', 'week', 'day'].includes(data.settings.defaultView)) state.view = data.settings.defaultView;
   }
 
@@ -2387,7 +2419,7 @@
     function show(next) {
       if (next.revision < revision) return;
       revision = next.revision;
-      check.disabled = ['unsupported', 'checking', 'downloading', 'ready', 'preparing', 'installing'].includes(next.status);
+      check.disabled = ['unsupported', 'checking', 'downloading', 'ready', 'preparing', 'installing', 'restart-required'].includes(next.status);
       install.hidden = next.status !== 'ready';
       $('#navUpdateBadge').hidden = next.status !== 'ready';
       const version = next.version ? 'v' + next.version : '새 버전';
@@ -2408,7 +2440,7 @@
         save: '저장 완료를 확인하지 못해 업데이트하지 않았어요. 내용을 저장한 뒤 다시 시도해 주세요.',
         backup: '업데이트 전 백업을 만들지 못했어요. 저장 위치를 확인한 뒤 다시 시도해 주세요.',
         busy: '종료나 저장 확인이 진행 중이에요. 잠시 후 다시 시도해 주세요.',
-        install: '설치 프로그램을 시작하지 못했어요. 지금 앱을 계속 사용하고 다시 시도해 주세요.',
+        install: '설치를 시작하지 못했어요. 앱을 다시 실행한 뒤 업데이트를 확인해 주세요.',
       })[next.issue] || messages[next.status] || '업데이트 정보를 확인하고 있어요.';
     }
     async function command(action) {
@@ -2494,12 +2526,18 @@
         }
         clearTimeout(restoreArmed.get(b.name));
         restoreArmed.delete(b.name);
-        const r = await window.PlannerNative.restoreBackup(b.name);
-        if (r.error) { $('#set-backupMsg').textContent = r.error; $('#set-backupMsg').className = 'set-msg err'; return; }
-        applyLoaded(r.data);
-        render();
-        $('#set-backupMsg').textContent = `${fmtBackupLabel(b)} 백업으로 복원했어요.`;
-        $('#set-backupMsg').className = 'set-msg ok';
+        btn.disabled = true;
+        try {
+          const r = await window.PlannerNative.restoreBackup(b.name);
+          if (r.error) { $('#set-backupMsg').textContent = r.error; $('#set-backupMsg').className = 'set-msg err'; return; }
+          applyLoaded(r.data);
+          render();
+          $('#set-backupMsg').textContent = `${fmtBackupLabel(b)} 백업으로 복원했어요.`;
+          $('#set-backupMsg').className = 'set-msg ok';
+        } catch {
+          $('#set-backupMsg').textContent = '백업을 복원하지 못했어요. 저장 상태와 백업 파일을 확인한 뒤 다시 시도해 주세요.';
+          $('#set-backupMsg').className = 'set-msg err';
+        } finally { btn.disabled = false; }
       });
       box.append(h('div', { class: 'bk-row' },
         h('span', { class: 'bk-name', text: fmtBackupLabel(b) + (b.time ? ' · 수동/복원 전' : '') }),

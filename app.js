@@ -11,7 +11,8 @@
     modePromise,
     catalog = [],
     legacy = {},
-    detailId;
+    detailId,
+    detailRequest = 0;
   const categories = window.PROJECT_CATEGORIES;
   const calendarArt = `<div class="calendar-art" aria-hidden="true"><div class="art-top"><span>일상을 정리하는 작은 여유</span><span>↗</span></div><div class="calendar"><div class="calendar-head"><span>나의 한 주</span><span>‹ &nbsp; ›</span></div><div class="week"><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span><span>일</span></div><div class="days"><span>12</span><span>13</span><span class="today">14</span><span>15</span><span>16</span><span>17</span><span>18</span></div><div class="schedule"><span class="event green">새로운 아이디어 정리</span><span class="event purple">나만의 집중 시간</span><span class="event orange">잠깐, 산책하기</span></div><div class="calendar-bottom">작은 계획으로 채우는, 더 좋은 하루 <span>✳</span></div></div><span class="art-caption">MAKE ROOM FOR YOUR DAY.</span></div>`;
   const text = (tag, value, className) => {
@@ -55,6 +56,7 @@
   const dialog = $('#project-dialog');
   dialog.querySelector('.close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => {
+    detailRequest++;
     const url = new URL(location.href);
     url.searchParams.delete('project');
     history.replaceState(null, '', url);
@@ -92,7 +94,7 @@
       });
     return legacy[kind];
   }
-  async function addImage(container, value, alt) {
+  async function addImage(container, value, alt, isCurrent = () => true) {
     if (!value) return;
     const image = new Image();
     image.className = 'project-image';
@@ -100,7 +102,9 @@
     image.loading = 'lazy';
     image.referrerPolicy = 'no-referrer';
     try {
-      image.src = await api.resolveImage(value);
+      const source = await api.resolveImage(value);
+      if (!isCurrent()) return;
+      image.src = source;
       image.addEventListener('error', () => image.remove());
       container.append(image);
     } catch {
@@ -108,6 +112,8 @@
     }
   }
   async function showDetail(id) {
+    const request = ++detailRequest;
+    const isCurrent = () => request === detailRequest && dialog.open;
     detailId = id;
     $('#dialog-title').textContent = '프로젝트 소개';
     $('#dialog-description').textContent = '';
@@ -124,14 +130,15 @@
         (await getMode()) === 2
           ? (await api.publicDetail('project', id))?.data
           : (await old('project')).find((p) => p.id === id);
-      if (detailId !== id) return;
+      if (!isCurrent()) return;
       if (!data) throw Error('이 프로젝트는 공개 중이 아니거나 존재하지 않습니다.');
       $('#dialog-title').textContent = data.name;
       $('#dialog-description').textContent = data.description;
       $('#dialog-note').textContent = data.note || '아직 상세 소개가 없습니다.';
       $('#detail-status').textContent = '';
-      await addImage($('#dialog-images'), data.imageUrl, data.name + ' 대표 이미지');
+      await addImage($('#dialog-images'), data.imageUrl, data.name + ' 대표 이미지', isCurrent);
     } catch (e) {
+      if (!isCurrent()) return;
       $('#detail-status').textContent =
         e.message || '소개를 불러오지 못했습니다. 다시 열어 주세요.';
     }

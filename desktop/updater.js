@@ -18,7 +18,7 @@ function createUpdateController({ updater, currentVersion, disabledReason, prepa
     if (disposed) return;
     if (state.status === 'installing') {
       installFailed();
-      publish({ status: 'ready', issue: 'install' });
+      publish({ status: 'restart-required', issue: 'install' });
     } else publish({ status: 'error', issue: 'network', percent: 0 });
   }
   function on(event, fn) { updater.on(event, fn); listeners.push([event, fn]); }
@@ -38,7 +38,7 @@ function createUpdateController({ updater, currentVersion, disabledReason, prepa
     on('error', fail);
   }
   async function check() {
-    if (disposed || !enabled || checkPromise || ['checking', 'downloading', 'ready', 'preparing', 'installing'].includes(state.status)) return snapshot();
+    if (disposed || !enabled || checkPromise || ['checking', 'downloading', 'ready', 'preparing', 'installing', 'restart-required'].includes(state.status)) return snapshot();
     publish({ status: 'checking', issue: '' });
     checkPromise = (async () => {
       try {

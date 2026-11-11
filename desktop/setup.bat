@@ -25,6 +25,16 @@ if not exist "node_modules\electron\dist\electron.exe" (
   )
 )
 
+rem Electron 45 downloads its development binary on demand, not during npm install.
+if not exist "node_modules\electron\dist\electron.exe" (
+  call npx --no-install install-electron
+  if errorlevel 1 (
+    echo [!] Electron download failed. Check your connection and run setup again.
+    pause
+    exit /b 1
+  )
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0make-shortcut.ps1"
 if errorlevel 1 (
   echo.

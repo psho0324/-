@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { createStore } = require('./store.js');
 const { occurrencesInRange } = require('./renderer/recurrence.js');
 const { createUpdateController } = require('./updater.js');
@@ -14,6 +15,17 @@ let sessionEnding = false; // 윈도우 종료/로그오프 중이면 묻지 않
 let quitFlushed = false;   // 종료 전에 "저장 끝남"을 확인했는지
 let quitChecking = false;  // 확인이 진행 중인지(중복 방지)
 let trayTipShown = false;
+// renderer 하위 프레임이나 다른 창에서 저장/설치 IPC를 호출하지 못하게 합니다.
+const trustedSender = (event) => !!win && !win.isDestroyed()
+  && event?.sender === win.webContents
+  && event?.senderFrame === win.webContents.mainFrame;
+const handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
+  if (!trustedSender(event)) throw new Error('앱 화면에서만 사용할 수 있는 요청이에요.');
+  return listener(event, ...args);
+});
+const listen = (channel, listener) => ipcMain.on(channel, (event, ...args) => {
+  if (trustedSender(event)) listener(event, ...args);
+});
 const startHidden = process.argv.includes('--hidden'); // 윈도우 시작 시 자동 실행이면 창 없이 트레이로만
 
 // 설정은 화면(renderer)이 data.settings에 저장합니다.
@@ -40,15 +52,15 @@ function flushRenderer(timeoutMs = 2000) {
 // 종료해도 되는지: 저장이 끝났거나, 실패했어도 사용자가 "그래도 종료"를 고르면 true
 async function confirmQuit() {
   const ok = await flushRenderer();
-  if (ok !== false) return true;
+  if (ok === true) return true;
   const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
     type: 'warning',
     buttons: ['종료 취소', '저장하지 않고 종료'],
     defaultId: 0,
     cancelId: 0,
     title: '저장 실패',
-    message: '마지막 변경 내용을 저장하지 못했어요.',
-    detail: '지금 종료하면 저장되지 않은 변경은 사라져요. "종료 취소"를 누르면 창으로 돌아가 "다시 시도"를 누를 수 있어요.',
+    message: ok === null ? '저장 완료를 확인하지 못했어요.' : '마지막 변경 내용을 저장하지 못했어요.',
+    detail: '화면이 응답하지 않거나 저장에 실패했을 수 있어요. 지금 종료하면 저장되지 않은 변경은 사라져요. "종료 취소"를 누르면 창으로 돌아가 "다시 시도"를 누를 수 있어요.',
   });
   return r.response === 1;
 }
@@ -75,6 +87,12 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  // 로컬 앱 화면만 허용합니다. 외부 페이지에 저장/백업 API가 노출되지 않게 합니다.
+  const appUrl = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url.split('#')[0] !== appUrl) event.preventDefault();
   });
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -134,13 +152,13 @@ let appliedAutoStart = null;
 function applyAutoStart() {
   const want = setting('autoStart', false) === true;
   if (appliedAutoStart === want) return;
-  appliedAutoStart = want;
   try {
     app.setLoginItemSettings({
       openAtLogin: want,
       path: process.execPath,
       args: [...(app.isPackaged ? [] : [app.getAppPath()]), '--hidden'],
     });
+    appliedAutoStart = want;
   } catch (e) {
     console.error('자동 실행 설정 실패', e);
   }
@@ -195,7 +213,7 @@ function start() {
     try { store.backupIfNeeded(); } catch (e) { console.error('자동 백업 실패', e); }
     applyAutoStart();
 
-    ipcMain.handle('app:version', () => app.getVersion());
+    handle('app:version', () => app.getVersion());
     const canUpdate = process.platform === 'win32' && app.isPackaged && !process.windowsStore;
     const autoUpdater = canUpdate ? require('electron-updater').autoUpdater : null;
     const updates = createUpdateController({
@@ -226,23 +244,27 @@ function start() {
         showWindow();
       },
     });
-    ipcMain.handle('updates:state', () => updates.getState());
-    ipcMain.handle('updates:check', () => updates.check());
-    ipcMain.handle('updates:install', () => updates.install());
+    handle('updates:state', () => updates.getState());
+    handle('updates:check', () => updates.check());
+    handle('updates:install', () => updates.install());
     app.on('will-quit', () => updates.dispose());
-    ipcMain.handle('data:load', () => data);
-    ipcMain.on('app:flush-done', (_e, id, ok) => { const f = flushWaiters.get(id); if (f) f(ok === true); });
-    ipcMain.handle('data:save', (_e, next) => {
+    handle('data:load', () => data);
+    listen('app:flush-done', (_e, id, ok) => { const f = flushWaiters.get(id); if (f) f(ok === true); });
+    handle('data:save', (_e, next) => {
+      store.save(next);
       data = next;
-      store.save(data);
       applyAutoStart();
       return true;
     });
 
     // --- 저장 위치 / 백업 (설정 화면에서 사용)
-    ipcMain.handle('storage:info', () => store.info());
-    ipcMain.handle('storage:openFolder', () => shell.openPath(store.info().dataDir));
-    ipcMain.handle('storage:chooseFolder', async () => {
+    handle('storage:info', () => store.info());
+    handle('storage:openFolder', () => shell.openPath(store.info().dataDir));
+    const requireSaved = async () => {
+      if (await flushRenderer() !== true) throw new Error('저장 완료를 확인하지 못했어요. 내용을 저장한 뒤 다시 시도해 주세요.');
+    };
+    handle('storage:chooseFolder', async () => {
+      await requireSaved();
       const r = await dialog.showOpenDialog(win || undefined, {
         title: '데이터를 저장할 폴더 선택 (OneDrive·구글 드라이브·Dropbox 폴더 등)',
         properties: ['openDirectory', 'createDirectory'],
@@ -275,8 +297,9 @@ function start() {
       applyAutoStart();
       return { data, info: store.info() };
     });
-    ipcMain.handle('storage:resetFolder', () => {
+    handle('storage:resetFolder', async () => {
       try {
+        await requireSaved();
         data = store.useDir(app.getPath('userData'), 'current', data);
       } catch (e) {
         return { error: e.message };
@@ -284,10 +307,11 @@ function start() {
       return { data, info: store.info() };
     });
 
-    ipcMain.handle('backups:list', () => store.listBackups());
-    ipcMain.handle('backups:now', () => { store.backupNow(); return store.listBackups(); });
-    ipcMain.handle('backups:restore', (_e, name) => {
+    handle('backups:list', () => store.listBackups());
+    handle('backups:now', async () => { await requireSaved(); store.backupNow(); return store.listBackups(); });
+    handle('backups:restore', async (_e, name) => {
       try {
+        await requireSaved();
         data = store.restoreBackup(name);
       } catch (e) {
         return { error: e.message };
@@ -296,7 +320,7 @@ function start() {
       applyAutoStart();
       return { data };
     });
-    ipcMain.handle('backups:openFolder', () => {
+    handle('backups:openFolder', () => {
       const dir = store.info().backupDir;
       fs.mkdirSync(dir, { recursive: true });
       return shell.openPath(dir);
@@ -321,6 +345,16 @@ function start() {
     }, 2500);
 
     app.on('activate', () => showWindow());
+  }).catch(async () => {
+    // 읽기 실패를 빈 첫 실행으로 처리하면 기존 파일을 덮어쓸 수 있습니다.
+    try {
+      await dialog.showMessageBox({
+        type: 'error', title: '내 플래너를 시작하지 못했어요',
+        message: '저장 파일을 읽거나 앱을 준비하지 못했어요.',
+        detail: '기존 일정 파일을 지우거나 새 데이터로 덮어쓰지 않았어요. 저장 폴더의 접근 권한과 파일 상태를 확인해 주세요. 계속되면 앱 버전과 재현 상황을 알려 주세요.',
+        buttons: ['닫기'],
+      });
+    } finally { app.exit(1); }
   });
 
   // 종료(트레이 "종료", 자동 업데이트 재시작 등): 저장이 끝난 걸 확인한 뒤에 진짜로 종료해요.

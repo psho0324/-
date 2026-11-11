@@ -39,8 +39,8 @@ function fixture(options = {}) {
   await test('저장 확인을 기다린 후 한 번만 설치, 동시에 누르면 중복 없음',async()=>{
     let done;const f=fixture({prepareInstall:()=>new Promise(r=>{done=r})});f.updater.emit('update-downloaded',{version:'0.1.2'});const pending=f.controller.install();await f.controller.install();assert(!f.calls.includes('install'));done('');await pending;assert.deepEqual(f.calls.filter(x=>x==='install'),['install']);f.controller.dispose();
   });
-  await test('설치 시작 실패는 종료 상태를 되돌리고 재시도 허용',async()=>{
-    const f=fixture({performInstall:()=>{throw Error('cannot spawn')}});f.updater.emit('update-downloaded',{version:'0.1.2'});await f.controller.install();assert.equal(f.controller.getState().status,'ready');assert.equal(f.controller.getState().issue,'install');assert(f.calls.includes('rollback'));f.controller.dispose();
+  await test('설치 시작 실패는 종료 상태를 되돌리고 재실행 전 재설치 차단',async()=>{
+    const f=fixture({performInstall:()=>{throw Error('cannot spawn')}});f.updater.emit('update-downloaded',{version:'0.1.2'});await f.controller.install();assert.equal(f.controller.getState().status,'restart-required');assert.equal(f.controller.getState().issue,'install');assert(f.calls.includes('rollback'));await f.controller.install();await f.controller.check();assert.equal(f.updater.calls,0);assert.equal(f.calls.filter(c=>c==='rollback').length,1);f.controller.dispose();
   });
   await test('늦게 도착한 설치 오류·종료 후 오류도 미처리 예외를 만들지 않음',async()=>{
     const f=fixture();f.updater.emit('update-downloaded',{version:'0.1.2'});await f.controller.install();f.updater.emit('error',Error('spawn'));assert.equal(f.controller.getState().issue,'install');f.controller.dispose();const state=f.controller.getState();f.updater.emit('error',Error('late'));assert.deepEqual(f.controller.getState(),state);
@@ -49,11 +49,11 @@ function fixture(options = {}) {
   // 실제 main.js의 종료·백업·before-quit 연결도 VM에서 검증합니다.
   const fs = require('node:fs'), path=require('node:path'), vm=require('node:vm');
   function mainFixture() {
-    const handlers={}, events={}, timers=[], calls=[], fakeUpdater=new FakeUpdater();let backupFails=false;
+    const handlers={}, events={}, timers=[], calls=[], fakeUpdater=new FakeUpdater();let currentWindow;let backupFails=false;
     const app={isPackaged:true,getVersion:()=> '0.1.1',getPath:()=>'/isolated',getAppPath:()=>'/app',requestSingleInstanceLock:()=>true,setAppUserModelId(){},whenReady:()=>Promise.resolve(),on:(n,f)=>events[n]=f,setLoginItemSettings(){},quit:()=>calls.push('quit')};
-    class Window { constructor(){this.webContents={send:(ch,id)=>calls.push({ch,id})};} setMenuBarVisibility(){} loadFile(){} once(){} on(){} isDestroyed(){return false} isMinimized(){return false} show(){} focus(){} }
+    class Window { constructor(){currentWindow=this;this.webContents={mainFrame:{},send:(ch,id)=>calls.push({ch,id}),on(){},setWindowOpenHandler(){}};} setMenuBarVisibility(){} loadFile(){} once(){} on(){} isDestroyed(){return false} isMinimized(){return false} show(){} focus(){} }
     class Tray{setToolTip(){}setContextMenu(){}on(){}}
-    const electron={app,BrowserWindow:Window,ipcMain:{handle:(k,f)=>handlers[k]=f,on:(k,f)=>handlers[k]=f},Notification:{isSupported:()=>false},Tray,Menu:{buildFromTemplate:x=>x},nativeImage:{createFromPath:()=>({resize:()=>({})})},dialog:{},shell:{}};
+    const electron={app,BrowserWindow:Window,ipcMain:{handle:(k,f)=>handlers[k]=(...args)=>f({sender:currentWindow.webContents,senderFrame:currentWindow.webContents.mainFrame},...args.slice(args[0]==null?1:0)),on:(k,f)=>handlers[k]=(_event,...args)=>f({sender:currentWindow.webContents,senderFrame:currentWindow.webContents.mainFrame},...args)},Notification:{isSupported:()=>false},Tray,Menu:{buildFromTemplate:x=>x},nativeImage:{createFromPath:()=>({resize:()=>({})})},dialog:{},shell:{}};
     fakeUpdater.quitAndInstall=(silent,restart)=>{calls.push({install:[silent,restart]});let prevented=false;events['before-quit']({preventDefault:()=>{prevented=true}});calls.push({prevented});};
     const store={load:()=>({data:{events:[],todos:[],projects:[],settings:{}}}),backupIfNeeded(){},backupNow:()=>{calls.push('backup');if(backupFails)throw Error('read-only')},checkExternal:()=>null};
     const sandbox={process:{platform:'win32',argv:[]},__dirname:path.join(__dirname,'..'),console,require:r=>r==='electron'?electron:r==='electron-updater'?{autoUpdater:fakeUpdater}:r==='./store.js'?{createStore:()=>store}:r==='./renderer/recurrence.js'?{occurrencesInRange:()=>[]}:r==='./updater.js'?{createUpdateController}:require(r),setInterval:()=>({unref(){}}),setTimeout:(fn,ms)=>{const t={fn,ms,unref(){}};timers.push(t);return t},clearTimeout(){}};

@@ -32,7 +32,7 @@ npm run build
 
 ## 처음 설정하거나 기존 사이트 확장하기
 
-[SETUP.md](SETUP.md)를 따릅니다. 기존 사이트는 Supabase SQL Editor에서 `supabase/migrations/002_workspace.sql`을 한 번 실행하면 됩니다. 기존 프로젝트·기록은 자동으로 보존·이관되며 관리자 계정은 그대로 사용합니다. 실행 전 Supabase에서 기존 테이블을 내보내 보관할 수 있습니다.
+[SETUP.md](SETUP.md)를 따릅니다. 기존 사이트는 Supabase SQL Editor에서 `supabase/migrations/002_workspace.sql` 다음 `supabase/migrations/003_validation.sql`을 실행합니다. 002를 이미 적용했다면 이번 입력 검증 보완에는 003만 실행하면 됩니다. 기존 프로젝트·기록은 자동으로 보존·이관되며 관리자 계정은 그대로 사용합니다. 실행 전 Supabase에서 기존 테이블을 내보내 보관할 수 있습니다.
 
 ## 저장·공개·복원
 

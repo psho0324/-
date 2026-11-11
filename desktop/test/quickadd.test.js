@@ -33,4 +33,13 @@ t('오후 3시에 치과', { kind: 'event', title: '치과', start: '2026-11-04T
 t('10일 병원 예약', { kind: 'todo', date: '2026-11-10', title: '병원 예약' });
 t('3.5시간 작업', { kind: 'todo', title: '작업' });                                       // 길이만 있고 시각 없음 → 할 일
 t('', { empty: true });
+for (const text of ['2026-02-30 오후 3시 회의','13월 2일 회의','2월 30일 회의','15:99 회의','오후 15시 회의','24:01 회의','이번달 31일 회의']) {
+  const result=parse(text,NOW,cats);
+  assert.strictEqual(result.invalid,true,text);
+  assert.strictEqual(result.title,text,'잘못된 입력 원문은 보존');
+  n++;
+}
+t('2월 29일 여행', { date:'2028-02-29', title:'여행' });
+t('31일 회의', { date:'2026-12-31', title:'회의' });
+t('24:00 자정', { start:'2026-11-05T00:00',title:'자정' });
 console.log(`\n${n} passed`);

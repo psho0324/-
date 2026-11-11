@@ -77,7 +77,19 @@
     return !!editing && JSON.stringify({ values: snapshot(), images }) !== baseline;
   }
   function saveLocal() {
-    if (!user || !editing || !dirty()) return;
+    if (!user || !editing) return;
+    if (!dirty()) {
+      // Reverting this item's edits must not leave an older temporary revision.
+      // A temporary draft for a different item remains available.
+      try {
+        const saved = JSON.parse(localStorage.getItem(localKey()));
+        if (saved?.editing?.kind === editing.kind && saved.editing.id === editing.id) {
+          clearLocal();
+          $('#local-save-status').textContent = '';
+        }
+      } catch { /* Keep unreadable temporary data for explicit discard. */ }
+      return;
+    }
     try {
       localStorage.setItem(
         localKey(),

@@ -18,9 +18,10 @@ const appEvents = {};
 let dialogOpen = { canceled: false, filePaths: [] };
 let dialogMsg = { response: 0 };
 let msgBoxCalls = 0;
+let autoFlush = false;
 
 class FakeWin {
-  constructor(opts) { this.opts = opts; this.ev = {}; this.once_ = {}; this.visible = false; this.destroyed = false; log.windows.push(this); this.webContents = { send: (ch, d) => log.sent.push([ch, d]) }; }
+  constructor(opts) { this.opts = opts; this.ev = {}; this.once_ = {}; this.visible = false; this.destroyed = false; log.windows.push(this); this.webContents = { mainFrame: {}, send: (ch, d) => { log.sent.push([ch, d]); if (autoFlush && ch === 'app:flush-request') queueMicrotask(() => ipcOn['app:flush-done'](null, d, true)); }, on() {}, setWindowOpenHandler() {} }; }
   setMenuBarVisibility() {}
   loadFile() {}
   once(n, f) { this.once_[n] = f; }
@@ -53,7 +54,7 @@ const fakeElectron = {
     quit: () => { log.quit++; },
   },
   BrowserWindow: FakeWin,
-  ipcMain: { handle: (ch, f) => { handlers[ch] = f; }, on: (ch, f) => { ipcOn[ch] = f; } },
+  ipcMain: { handle: (ch, f) => { handlers[ch] = (...args) => f({ sender: log.windows.at(-1).webContents, senderFrame: log.windows.at(-1).webContents.mainFrame }, ...args.slice(args[0] == null ? 1 : 0)); }, on: (ch, f) => { ipcOn[ch] = (_event, ...args) => f({ sender: log.windows.at(-1).webContents, senderFrame: log.windows.at(-1).webContents.mainFrame }, ...args); } },
   Notification: FakeNotification,
   Tray: class { constructor() { log.trays++; this.h = {}; } setToolTip() {} setContextMenu(m) { this.menu = m; } on(n, f) { this.h[n] = f; } },
   Menu: { buildFromTemplate: (t) => t },
@@ -170,6 +171,7 @@ const sample = (n) => ({ events: Array.from({ length: n }, (_, i) => ({ id: 'e' 
   });
 
   await test('백업: 시작할 때 오늘 자동 백업이 만들어졌고, 목록/복원 동작', async () => {
+    autoFlush = true;
     const list = await handlers['backups:list']();
     assert.ok(list.length >= 0);
     await handlers['data:save'](null, sample(2));
@@ -226,6 +228,7 @@ const sample = (n) => ({ events: Array.from({ length: n }, (_, i) => ({ id: 'e' 
     assert.ok((await handlers['storage:chooseFolder']()).canceled);
   });
 
+  autoFlush = false;
   // 종료 상태를 새로 시작하기 위해 main.js를 다시 불러와요
   delete require.cache[require.resolve('../main.js')];
   for (const k of Object.keys(appEvents)) delete appEvents[k];
@@ -314,15 +317,18 @@ const sample = (n) => ({ events: Array.from({ length: n }, (_, i) => ({ id: 'e' 
     assert.strictEqual(closePrevented, false);
   });
 
-  await test('화면이 응답하지 않으면 2초 뒤에 그냥 종료(영원히 안 꺼지는 일 없음)', async () => {
+  await test('화면이 응답하지 않으면 저장 미확인 경고 후 종료 취소 가능', async () => {
     delete require.cache[require.resolve('../main.js')];
     for (const k of Object.keys(appEvents)) delete appEvents[k];
     log.windows.length = 0; log.quit = 0;
     require('../main.js');
     await flush(); await flush();
     appEvents['before-quit']({ preventDefault() {} });
+    dialogMsg = { response: 0 };
+    const before = msgBoxCalls;
     await new Promise((r) => setTimeout(r, 2200));
-    assert.strictEqual(log.quit, 1);
+    assert.strictEqual(msgBoxCalls, before + 1);
+    assert.strictEqual(log.quit, 0);
   });
 
   console.log(`\n${passed} passed`);

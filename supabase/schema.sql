@@ -66,4 +66,10 @@ insert into public.journal_entries(id,project_id,date,title,summary,body,is_publ
 insert into public.journal_entries(id,project_id,date,title,summary,body,is_published) values (2,'workspace','2026-11-06','각자의 자리가 있는 작업실로','떠돌이라는 이름을 달고, 프로젝트 · 제작 기록 · 다음 실험으로 공간을 나눴습니다.','모든 앱을 같은 비중으로 소개하기 위해 카테고리 탭을 만들었습니다. 프로젝트는 진행 상태로 찾아보고, 제작 과정과 다음 아이디어는 각자의 탭에서 볼 수 있도록 정리했습니다.',true) on conflict (id) do nothing;
 insert into public.journal_entries(id,project_id,date,title,summary,body,is_published) values (1,'workspace','2026-11-06','작은 작업실, 처음 문을 열다','직접 만드는 앱과 프로젝트를 모아 둘 홈페이지를 만들고 공개했습니다.','개발 중인 캘린더 앱을 첫 프로젝트로 등록했습니다. 프로젝트 소개와 상태 필터, 상세 설명을 만들고 GitHub Pages로 홈페이지를 공개했습니다.',true) on conflict (id) do nothing;
 select setval('public.journal_entries_id_seq', greatest((select coalesce(max(id), 1) from public.journal_entries), (select last_value from public.journal_entries_id_seq)));
+-- v2 이후 이 초기 스크립트를 다시 실행해도 오래된 공개본을 노출하지 않습니다.
+do $$ begin
+ if to_regclass('public.workspace_items') is not null then
+  revoke all on public.projects,public.journal_entries from anon,authenticated;
+ end if;
+end $$;
 commit;

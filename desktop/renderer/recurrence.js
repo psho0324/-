@@ -68,11 +68,18 @@
       end0 = ev.end ? parseLocal(ev.end) : new Date(base.getTime() + 3600e3);
     }
     const dur = Math.max(0, end0 - base);
+    const calendarDays = ev.allDay ? Math.max(1, Math.round((
+      Date.UTC(end0.getFullYear(), end0.getMonth(), end0.getDate()) -
+      Date.UTC(base.getFullYear(), base.getMonth(), base.getDate())
+    ) / 864e5)) : null;
     const skip = new Set(ev.exceptions || []);
     const out = [];
 
     const push = (s) => {
-      const e = new Date(s.getTime() + dur);
+      // 종일 일정은 23/25시간인 서머타임 전환일에도 달력 날짜를 유지합니다.
+      const e = ev.allDay
+        ? new Date(s.getFullYear(), s.getMonth(), s.getDate() + calendarDays)
+        : new Date(s.getTime() + dur);
       if (!(s < to && (e > from || s >= from))) return;
       if (skip.has(fmtDate(s))) return;
       out.push({ start: s, end: e, key: ev.id + '|' + fmtDate(s) });

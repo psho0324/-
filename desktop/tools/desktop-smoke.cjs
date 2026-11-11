@@ -97,7 +97,7 @@ async function addTodo(page, title) {
     w.webContents.on('preload-error', (_event, preloadPath, error) => {
       globalThis.__plannerSmokePreloadErrors.push({ path: preloadPath, message: error.message, stack: error.stack });
     });
-    return { appPath: app.getAppPath(), contextIsolation: w.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: w.webContents.getLastWebPreferences().nodeIntegration };
+    return { electronVersion: process.versions.electron, appPath: app.getAppPath(), contextIsolation: w.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: w.webContents.getLastWebPreferences().nodeIntegration };
   });
   // Electron 33 omits preload from getLastWebPreferences. Check the actual
   // application path plus IPC execution and listen for native preload failures.
@@ -110,9 +110,12 @@ async function addTodo(page, title) {
   await page.waitForFunction(() => window.storage && typeof window.storage.info === 'function' && document.querySelector('#homeBody')?.children.length > 0);
   assert.deepEqual(await running.evaluate(() => globalThis.__plannerSmokePreloadErrors), [], 'Native preload-error event fired');
   assert(prefs.contextIsolation && !prefs.nodeIntegration);
+  assert.equal(prefs.electronVersion, require('../package.json').devDependencies.electron);
+  report.electronVersion = prefs.electronVersion;
   const icon = await running.evaluate(({ app, nativeImage }) => !nativeImage.createFromPath(app.getAppPath() + '/assets/icon.png').isEmpty());
   assert(icon, 'Packaged window/tray icon cannot be read');
   record('Real Electron window, actual preload IPC, context isolation, empty first-run data, icon path');
+
   await page.screenshot({ path: path.join(output, 'startup.png') });
 
   const expectedVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
@@ -279,6 +282,17 @@ async function addTodo(page, title) {
   page = await launch(true);
   assert.equal(await running.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false, '--hidden opened a visible window');
   record('Real --hidden launch creates a hidden app window');
+  const localUrl = page.url();
+  await page.evaluate(() => {
+    const a = document.createElement('a'); a.href = 'https://example.invalid/blocked';
+    document.body.append(a); a.click(); a.remove();
+    window.open('https://example.invalid/blocked', '_blank');
+  });
+  await page.waitForTimeout(150);
+  assert.equal(page.url(), localUrl, 'External navigation escaped the local app');
+  assert.equal(await running.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+  record('Actual renderer external links and popups cannot leave the local app or create windows');
+
   await quit();
   if (report.failures.length) throw Error('Renderer runtime errors were captured');
 })().catch(async error => {
