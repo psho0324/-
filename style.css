@@ -924,12 +924,39 @@ footer .brand {
   padding-top: 24px;
 }
 .journal-back {
-  padding: 5px 0;
-  margin-bottom: 24px;
-  background: transparent;
-  border: 0;
-  color: #526a44;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 252px;
+  min-height: 64px;
+  padding: 14px 22px;
+  margin-bottom: 28px;
+  background: #2c432f;
+  border: 1px solid #2c432f;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px #233d231a;
+}
+.journal-back:hover {
+  background: #1f3422;
+  border-color: #1f3422;
+}
+.journal-back-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  background: #ffffff1f;
+  border-radius: 50%;
+}
+.journal-back-icon svg {
+  width: 20px;
+  height: 20px;
 }
 .journal-records-heading {
   display: flex;
@@ -1043,6 +1070,10 @@ footer .brand {
     grid-column: 2;
     grid-row: 2;
     margin-top: 0;
+  }
+  .journal-back {
+    width: 100%;
+    min-width: 0;
   }
   .journal-records-heading {
     align-items: flex-start;
