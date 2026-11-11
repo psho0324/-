@@ -12,6 +12,8 @@
     catalog = [],
     legacy = {},
     detailId,
+    journalSelected = false,
+    catalogLoading = false,
     detailRequest = 0;
   const categories = window.PROJECT_CATEGORIES;
   const calendarArt = `<div class="calendar-art" aria-hidden="true"><div class="art-top"><span>일상을 정리하는 작은 여유</span><span>↗</span></div><div class="calendar"><div class="calendar-head"><span>나의 한 주</span><span>‹ &nbsp; ›</span></div><div class="week"><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span><span>일</span></div><div class="days"><span>12</span><span>13</span><span class="today">14</span><span>15</span><span>16</span><span>17</span><span>18</span></div><div class="schedule"><span class="event green">새로운 아이디어 정리</span><span class="event purple">나만의 집중 시간</span><span class="event orange">잠깐, 산책하기</span></div><div class="calendar-bottom">작은 계획으로 채우는, 더 좋은 하루 <span>✳</span></div></div><span class="art-caption">MAKE ROOM FOR YOUR DAY.</span></div>`;
@@ -33,6 +35,7 @@
 
   const tabs = [...document.querySelectorAll('[role=tab]')];
   function selectTab(tab) {
+    if (tab.id === 'tab-journal') showJournalPicker();
     tabs.forEach((t) => {
       const selected = t === tab;
       t.setAttribute('aria-selected', selected);
@@ -319,11 +322,8 @@
       const journal = text('button', '제작 기록 ↗');
       journal.setAttribute('aria-label', project.name + ' 제작 기록');
       journal.addEventListener('click', () => {
-        states.entry.filter = project.id;
-        renderJournalFilters();
-        load('entry', true);
         selectTab($('#tab-journal'));
-        $('#tab-journal').focus();
+        openJournal(project.id);
         $('#projects').scrollIntoView({ block: 'start' });
       });
       actions.append(journal);
@@ -335,21 +335,74 @@
   function renderJournalFilters() {
     const group = $('#journal-filters');
     group.replaceChildren();
-    for (const item of [{ id: null, name: '전체' }, ...catalog]) {
-      const button = text('button', item.name);
+    const projects = [
+      ...catalog.filter((p) => p.showInProjects !== false),
+      ...catalog.filter((p) => p.showInProjects === false)
+    ];
+    for (const item of [{ id: null, name: '전체' }, ...projects]) {
+      const all = item.id === null;
+      const button = text('button', '', 'journal-project-card');
       button.type = 'button';
       button.dataset.journalFilter = item.id === null ? '*' : 'project:' + item.id;
-      const selected = states.entry.filter === item.id;
-      button.classList.toggle('selected', selected);
-      button.setAttribute('aria-pressed', selected);
-      button.addEventListener('click', () => {
-        states.entry.filter = item.id;
-        renderJournalFilters();
-        load('entry', true);
-      });
+      button.setAttribute('aria-label', (all ? '전체' : item.name) + ' 제작 기록 보기');
+      const top = text('span', '', 'journal-card-top');
+      const icon = text('span', '', 'journal-card-icon');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = all
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-3H4V4Zm9 3a3 3 0 0 1 3-3h4v14h-3a4 4 0 0 0-4 3"/></svg>';
+      const arrow = text('span', '↗', 'journal-card-arrow');
+      arrow.setAttribute('aria-hidden', 'true');
+      top.append(icon, arrow);
+      button.append(
+        top,
+        text('span', all ? 'ALL STORIES' : 'PROJECT JOURNAL', 'journal-card-label'),
+        text('strong', item.name, 'journal-card-title'),
+        text(
+          'span',
+          all ? '작업실에 쌓인 모든 이야기를 한곳에서.' : '시작부터 업데이트까지, 만드는 과정.',
+          'journal-card-description'
+        ),
+        text('span', '제작 기록 보기 →', 'journal-card-link')
+      );
+      button.addEventListener('click', () => openJournal(item.id));
       group.append(button);
     }
   }
+  function showJournalPicker(focusCard = false) {
+    const state = states.entry;
+    journalSelected = false;
+    state.generation++;
+    state.loading = false;
+    state.items = [];
+    state.total = 0;
+    $('#journal-picker').hidden = false;
+    $('#journal-records').hidden = true;
+    $('#journal-list').replaceChildren();
+    $('#entry-status').textContent = '';
+    $('#entry-retry').hidden = true;
+    $('#entry-more').hidden = true;
+    $('#journal-empty').hidden = true;
+    if (focusCard) {
+      const filter = state.filter === null ? '*' : 'project:' + state.filter;
+      [...$('#journal-filters').querySelectorAll('button')]
+        .find((button) => button.dataset.journalFilter === filter)
+        ?.focus();
+    }
+  }
+  function openJournal(projectId) {
+    journalSelected = true;
+    states.entry.filter = projectId;
+    $('#journal-picker').hidden = true;
+    $('#journal-records').hidden = false;
+    const name =
+      projectId === null ? '전체' : catalog.find((p) => p.id === projectId)?.name || '프로젝트';
+    $('#journal-title').textContent = name + ' 제작 기록';
+    $('#journal-result').textContent = '';
+    load('entry', true);
+    $('#journal-title').focus();
+  }
+  $('#journal-back').addEventListener('click', () => showJournalPicker(true));
   function renderEntries() {
     const list = $('#journal-list');
     list.replaceChildren();
@@ -421,9 +474,11 @@
     $('#project-count').textContent = String(projects.length).padStart(2, '0');
   }
   async function load(kind, reset = false) {
+    if (kind === 'entry' && !journalSelected) return;
     const state = states[kind];
     if (state.loading && !reset) return;
     const generation = ++state.generation;
+    const filter = state.filter;
     if (reset) {
       state.items = [];
       ({ project: renderProjects, entry: renderEntries, idea: renderIdeas })[kind]();
@@ -434,21 +489,20 @@
     $('#' + kind + '-more').hidden = true;
     try {
       const currentMode = await getMode();
+      if (generation !== state.generation) return;
       let page;
       if (currentMode === 2) {
         page = await api.publicList(kind, state.items.length, {
-          projectId: kind === 'entry' ? state.filter : null,
-          status: kind === 'project' ? state.filter : null
+          projectId: kind === 'entry' ? filter : null,
+          status: kind === 'project' ? filter : null
         });
         page.items = page.items.map((item) => ({ ...item.data, id: item.id }));
       } else if (kind === 'idea') page = { items: [], total: 0 };
       else {
         let data = await old(kind);
         if (kind === 'project')
-          data = data.filter(
-            (p) => p.showInProjects !== false && (!state.filter || p.status === state.filter)
-          );
-        else if (state.filter !== null) data = data.filter((e) => e.projectId === state.filter);
+          data = data.filter((p) => p.showInProjects !== false && (!filter || p.status === filter));
+        else if (filter !== null) data = data.filter((e) => e.projectId === filter);
         page = {
           total: data.length,
           items: data.slice(state.items.length, state.items.length + 12)
@@ -495,20 +549,34 @@
     document.querySelector('[data-filter=all]').click()
   );
   renderJournalFilters();
-  ['project', 'entry', 'idea'].forEach((kind) => load(kind, true));
-  getMode()
-    .then((v) => (v === 2 ? api.catalog() : old('project')))
-    .then((data) => {
-      catalog = data;
+  ['project', 'idea'].forEach((kind) => load(kind, true));
+  async function loadCatalog() {
+    if (catalogLoading) return;
+    catalogLoading = true;
+    $('#journal-picker-status').textContent = '프로젝트를 불러오는 중…';
+    $('#journal-picker-retry').hidden = true;
+    try {
+      catalog = (await getMode()) === 2 ? await api.catalog() : await old('project');
       updateCounts();
       renderJournalFilters();
-      renderEntries();
-    })
-    .catch(() => {
-      const retry = text('button', '프로젝트 필터 다시 불러오기', 'retry-button');
-      retry.onclick = () => location.reload();
-      $('#journal-filters').append(retry);
-    });
+      $('#journal-picker-status').textContent = '';
+      if (journalSelected) {
+        const name =
+          states.entry.filter === null
+            ? '전체'
+            : catalog.find((p) => p.id === states.entry.filter)?.name || '프로젝트';
+        $('#journal-title').textContent = name + ' 제작 기록';
+        renderEntries();
+      }
+    } catch {
+      $('#journal-picker-status').textContent = '프로젝트를 불러오지 못했어요. 다시 시도해 주세요.';
+      $('#journal-picker-retry').hidden = false;
+    } finally {
+      catalogLoading = false;
+    }
+  }
+  $('#journal-picker-retry').addEventListener('click', loadCatalog);
+  loadCatalog();
   const shared = new URL(location.href).searchParams.get('project');
   if (shared) showDetail(shared);
 })();

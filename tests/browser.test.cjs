@@ -15,7 +15,8 @@ let db,
   ownerPassword = 'test-password',
   loseSave = false,
   saveLost = false,
-  failJournal = false;
+  failJournal = false,
+  journalRequests = 0;
 const files = new Map(),
   errors = [];
 let queue = Promise.resolve();
@@ -109,6 +110,7 @@ async function routeApi(route) {
       const name = url.pathname.split('/').pop();
       if (!/^workspace_[a-z_]+$/.test(name)) return result(404, {});
       const body = req.postDataJSON() || {};
+      if (name === 'workspace_public_list' && body.p_kind === 'entry') journalRequests++;
       if (failJournal && name === 'workspace_public_list' && body.p_kind === 'entry')
         return result(500, {});
       const keys = Object.keys(body);
@@ -294,6 +296,207 @@ function card(page, id, list = 'project-list') {
     );
     assert(!(await releasedPage.locator('#download-unsigned-notice').isVisible()));
     await released.close();
+    // Journals start with project cards. No entry list is fetched before an explicit choice.
+    const journalContext = await context(),
+      journalPage = await journalContext.newPage();
+    const requestsBeforePicker = journalRequests;
+    await journalPage.goto(base + '/');
+    await journalPage.locator('.project-card').waitFor();
+    await journalPage
+      .locator('[data-journal-filter="project:workspace"]')
+      .waitFor({ state: 'attached' });
+    await journalPage.locator('#tab-journal').click();
+    assert(await journalPage.locator('#journal-picker').isVisible());
+    assert(!(await journalPage.locator('#journal-records').isVisible()));
+    assert.equal(await journalPage.locator('.journal-entry').count(), 0);
+    assert.equal(
+      journalRequests,
+      requestsBeforePicker,
+      'Opening the picker must not fetch all entries'
+    );
+    assert.deepEqual(await journalPage.locator('.journal-card-title').allTextContents(), [
+      '전체',
+      '캘린더 앱',
+      '떠돌이의 작업실'
+    ]);
+    const screenshots = path.join(root, 'test-results/journal-cards');
+    fs.mkdirSync(screenshots, { recursive: true });
+    await journalPage.setViewportSize({ width: 1280, height: 900 });
+    await journalPage
+      .locator('#projects')
+      .screenshot({ path: path.join(screenshots, 'desktop-picker.png') });
+    for (const width of [390, 320]) {
+      await journalPage.setViewportSize({ width, height: 844 });
+      assert.equal(
+        await journalPage.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false
+      );
+      await journalPage
+        .locator('#projects')
+        .screenshot({ path: path.join(screenshots, 'mobile-picker-' + width + '.png') });
+    }
+    await journalPage.getByRole('button', { name: '캘린더 앱 제작 기록 보기', exact: true }).click();
+    await journalPage.locator('#journal-empty').waitFor();
+    assert.equal(await journalPage.locator('#journal-title').textContent(), '캘린더 앱 제작 기록');
+    assert.equal(await journalPage.evaluate(() => document.activeElement.id), 'journal-title');
+    await journalPage.locator('#journal-back').click();
+    assert.equal(
+      await journalPage.evaluate(() => document.activeElement.dataset.journalFilter),
+      'project:calendar'
+    );
+    await journalPage
+      .getByRole('button', { name: '떠돌이의 작업실 제작 기록 보기', exact: true })
+      .click();
+    await journalPage.locator('.journal-entry').first().waitFor();
+    assert.equal(await journalPage.locator('.journal-entry').count(), 3);
+    assert(
+      (await journalPage.locator('.entry-label').allTextContents()).every(
+        (name) => name === '떠돌이의 작업실'
+      )
+    );
+    await journalPage.locator('#journal-back').click();
+    await journalPage.locator('[data-journal-filter="*"]').focus();
+    await journalPage.keyboard.press('Enter');
+    await journalPage.locator('.journal-entry').first().waitFor();
+    assert.equal(await journalPage.locator('.journal-entry').count(), 3);
+    assert.equal(await journalPage.locator('#journal-title').textContent(), '전체 제작 기록');
+    await journalPage.locator('#tab-projects').click();
+    await journalPage.locator('#tab-journal').click();
+    assert(await journalPage.locator('#journal-picker').isVisible());
+    assert.equal(await journalPage.locator('.journal-entry').count(), 0);
+
+    // Pagination stays within the chosen project. Synthetic rows are never sent to production.
+    for (let index = 1; index <= 13; index++) {
+      await db.query("insert into workspace_items(kind,id,published) values('entry',$1,$2)", [
+        'journal-card-fixture-' + index,
+        {
+          projectId: 'calendar',
+          date: '2026-11-11',
+          title: '테스트 제작 기록 ' + index,
+          summary: '저장과 백업을 다듬어 온 과정을 기록합니다.',
+          body: '검사용 예시 자료입니다.'
+        }
+      ]);
+    }
+    await journalPage.locator('[data-journal-filter="project:calendar"]').click();
+    await journalPage.locator('#entry-more').waitFor();
+    assert.equal(await journalPage.locator('.journal-entry').count(), 12);
+    await journalPage.locator('#entry-more').click();
+    await journalPage.waitForFunction(
+      () => document.querySelectorAll('.journal-entry').length === 13
+    );
+    assert(!(await journalPage.locator('#entry-more').isVisible()));
+    assert(
+      (await journalPage.locator('.entry-label').allTextContents()).every(
+        (name) => name === '캘린더 앱'
+      )
+    );
+    await journalPage.setViewportSize({ width: 1280, height: 900 });
+    await journalPage
+      .locator('#projects')
+      .screenshot({ path: path.join(screenshots, 'desktop-records.png') });
+    await journalPage.locator('#tab-projects').click();
+    await journalPage.getByRole('button', { name: '캘린더 앱 제작 기록', exact: true }).click();
+    await journalPage.locator('#entry-more').waitFor();
+    assert(await journalPage.locator('#journal-records').isVisible());
+    assert(!(await journalPage.locator('#journal-picker').isVisible()));
+    assert.equal(await journalPage.locator('#journal-title').textContent(), '캘린더 앱 제작 기록');
+    await journalPage.locator('#journal-back').click();
+
+    // Going back abandons pending work; an old response must not replace a later selection.
+    await journalPage.evaluate(() => {
+      window.journalOriginalList = window.WorkspaceBackend.publicList;
+      window.pendingJournals = [];
+      window.WorkspaceBackend.publicList = (...args) =>
+        args[0] === 'entry'
+          ? new Promise((resolve) =>
+              window.pendingJournals.push({ resolve, filter: args[2].projectId })
+            )
+          : window.journalOriginalList(...args);
+    });
+    await journalPage.locator('[data-journal-filter="project:calendar"]').click();
+    await journalPage.waitForFunction(() => window.pendingJournals.length === 1);
+    await journalPage.locator('#journal-back').click();
+    await journalPage.locator('[data-journal-filter="project:workspace"]').click();
+    await journalPage.waitForFunction(() => window.pendingJournals.length === 2);
+    await journalPage.evaluate(() => {
+      window.pendingJournals[1].resolve({
+        total: 1,
+        items: [
+          {
+            id: 'latest',
+            data: {
+              projectId: 'workspace',
+              title: '선택한 작업실 기록',
+              date: '2026-11-11',
+              summary: '선택한 프로젝트만 표시합니다.'
+            }
+          }
+        ]
+      });
+    });
+    await journalPage.getByRole('heading', { name: '선택한 작업실 기록', exact: true }).waitFor();
+    await journalPage.evaluate(() =>
+      window.pendingJournals[0].resolve({
+        total: 1,
+        items: [{ id: 'stale', data: { title: '이전 캘린더 응답', date: '2026-11-11' } }]
+      })
+    );
+    assert.equal(
+      await journalPage.getByRole('heading', { name: '이전 캘린더 응답', exact: true }).count(),
+      0
+    );
+    assert.equal(
+      await journalPage.locator('#journal-title').textContent(),
+      '떠돌이의 작업실 제작 기록'
+    );
+    await journalPage.locator('#journal-back').click();
+    await journalPage.locator('[data-journal-filter="*"]').click();
+    await journalPage.waitForFunction(() => window.pendingJournals.length === 3);
+    await journalPage.locator('#journal-back').click();
+    await journalPage.evaluate(() =>
+      window.pendingJournals[2].resolve({
+        total: 1,
+        items: [{ id: 'abandoned', data: { title: '돌아간 뒤의 응답', date: '2026-11-11' } }]
+      })
+    );
+    assert(await journalPage.locator('#journal-picker').isVisible());
+    assert.equal(await journalPage.locator('.journal-entry').count(), 0);
+    await journalContext.close();
+    await db.exec(
+      "delete from workspace_items where kind='entry' and id like 'journal-card-fixture-%'"
+    );
+
+    // The same two-step navigation works without the database (the static fallback).
+    const staticContext = await context(false),
+      staticPage = await staticContext.newPage();
+    await staticPage.goto(base + '/');
+    await staticPage.locator('.project-card').waitFor();
+    await staticPage.locator('#tab-journal').click();
+    assert(await staticPage.locator('#journal-picker').isVisible());
+    assert.equal(await staticPage.locator('.journal-entry').count(), 0);
+    await staticPage.locator('[data-journal-filter="project:workspace"]').click();
+    await staticPage.locator('.journal-entry').first().waitFor();
+    assert.equal(await staticPage.locator('.journal-entry').count(), 3);
+    await staticContext.close();
+    const catalogContext = await context(),
+      catalogPage = await catalogContext.newPage();
+    let failCatalog = true;
+    await catalogContext.route('**/rpc/workspace_catalog', (route) =>
+      failCatalog
+        ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+        : routeApi(route)
+    );
+    await catalogPage.goto(base + '/');
+    await catalogPage.locator('#tab-journal').click();
+    await catalogPage.locator('#journal-picker-retry').waitFor();
+    assert(await catalogPage.locator('#journal-picker').isVisible());
+    assert.equal(await catalogPage.locator('.journal-entry').count(), 0);
+    failCatalog = false;
+    await catalogPage.locator('#journal-picker-retry').click();
+    await catalogPage.locator('[data-journal-filter="project:calendar"]').waitFor();
+    assert(!(await catalogPage.locator('#journal-picker-retry').isVisible()));
+    await catalogContext.close();
     // Previously stored malformed fields must not prevent other public items rendering.
     // Direct local DB fixtures represent rows saved before strict RPC validation.
     const savedCalendar = (await db.query("select published from workspace_items where kind='project' and id='calendar'")).rows[0].published;
@@ -310,6 +513,7 @@ function card(page, id, list = 'project-list') {
     assert.equal(await malformedPage.locator('.project-card').count(),1,
       'Malformed legacy tags must not block project cards');
     await malformedPage.locator('#tab-journal').click();
+    await malformedPage.locator('[data-journal-filter="project:calendar"]').click();
     await malformedPage.waitForFunction(() => document.querySelector('#entry-status').textContent !== '불러오는 중…');
     for (const index of malformedDates.keys()) {
       const article=malformedPage.locator('.journal-entry').filter({has:malformedPage.getByRole('heading',{name:'Legacy entry '+index,exact:true})});
@@ -552,12 +756,15 @@ function card(page, id, list = 'project-list') {
     failJournal = true;
     await publicPage.reload();
     await publicPage.getByRole('tab', { name: '제작 기록' }).click();
+    await publicPage.locator('[data-journal-filter="*"]').click();
     await publicPage.locator('#entry-retry').waitFor();
     assert((await publicPage.locator('.project-card').count()) > 0);
     await publicPage.getByRole('tab', { name: '다음 실험' }).click();
     assert(await publicPage.locator('#panel-ideas').isVisible());
-    failJournal = false;
     await publicPage.getByRole('tab', { name: '제작 기록' }).click();
+    await publicPage.locator('[data-journal-filter="*"]').click();
+    await publicPage.locator('#entry-retry').waitFor();
+    failJournal = false;
     await publicPage.locator('#entry-retry').click();
     // Ideas and image uploads use actual SQL authorization; draft media stays private.
     await page.getByRole('tab', { name: '다음 실험', exact: true }).click();
@@ -668,7 +875,7 @@ function card(page, id, list = 'project-list') {
     assert.equal(ownerPassword, 'new-test-password');
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, download pending/ready dialogs, admin download metadata, public/draft separation, obsolete detail response isolation, malformed legacy date/tags/images display and read-only editor warning, reverted draft cleanup, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
+      'PASS: browser + real SQL RPC integration: legacy static view, non-admin denial, ID validation, project all filter, journal card navigation/filtering/pagination/stale-response isolation/catalog retry, download pending/ready dialogs, admin download metadata, public/draft separation, obsolete detail response isolation, malformed legacy date/tags/images display and read-only editor warning, reverted draft cleanup, local recovery, revision conflicts, duplicate retry, independent API errors, ideas, private image publication, tag wrapping, trash/restore/history, full image backup/import, mobile, password recovery. Hosted auth/storage transport simulated; no production mutations.'
     );
   } finally {
     if (browser) await browser.close();

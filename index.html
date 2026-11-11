@@ -14,7 +14,7 @@
       content="떠돌이의 작업실. 직접 만드는 앱과 프로젝트, 제작 기록과 다음 실험을 모읍니다."
     />
     <title>떠돌이의 작업실 — 앱과 실험, 그리고 기록</title>
-    <link rel="stylesheet" href="style.css?v=7828c7c4a278" />
+    <link rel="stylesheet" href="style.css?v=849ca3f232fd" />
   </head>
   <body>
     <header class="nav wrap">
@@ -117,28 +117,47 @@
           </p>
         </div>
         <div id="panel-journal" role="tabpanel" aria-labelledby="tab-journal" tabindex="0" hidden>
-          <div class="panel-heading">
-            <h3>만들면서 남긴 이야기</h3>
-            <p>작은 시작과 바뀐 점을 기록합니다.</p>
+          <div id="journal-picker">
+            <div class="panel-heading">
+              <div>
+                <h3>어떤 프로젝트의 이야기를 볼까요?</h3>
+                <p>궁금한 카드를 고르면 그 프로젝트의 제작 기록이 펼쳐져요.</p>
+              </div>
+            </div>
+            <div
+              class="journal-project-grid"
+              id="journal-filters"
+              role="group"
+              aria-label="제작 기록 프로젝트 선택"
+            ></div>
+            <p id="journal-picker-status" class="load-status" role="status"></p>
+            <button id="journal-picker-retry" class="retry-button" hidden>
+              프로젝트 다시 불러오기
+            </button>
           </div>
-          <div
-            class="filters journal-filters"
-            id="journal-filters"
-            role="group"
-            aria-label="제작 기록 프로젝트 필터"
-          ></div>
-          <p class="journal-result" id="journal-result" role="status"></p>
-          <p id="entry-status" class="load-status" role="status"></p>
-          <button id="entry-retry" class="retry-button" hidden>제작 기록 다시 불러오기</button>
-          <div class="journal-list" id="journal-list"></div>
-          <button id="entry-more" class="more-button" hidden>제작 기록 더 보기</button>
-          <div class="journal-empty" id="journal-empty" hidden>
-            <span aria-hidden="true">≡</span>
-            <h3 id="journal-empty-title"></h3>
-            <p>
-              아직 남긴 제작 기록이 없어요.<br />새로운 소식이 생기면 이곳에 차곡차곡 기록할게요.
-            </p>
-          </div>
+          <section id="journal-records" aria-labelledby="journal-title" hidden>
+            <button id="journal-back" class="journal-back" type="button">
+              ← 프로젝트 선택으로
+            </button>
+            <div class="journal-records-heading">
+              <div>
+                <p class="journal-kicker">PROJECT JOURNAL</p>
+                <h3 id="journal-title" tabindex="-1">제작 기록</h3>
+              </div>
+              <p class="journal-result" id="journal-result" role="status"></p>
+            </div>
+            <p id="entry-status" class="load-status" role="status"></p>
+            <button id="entry-retry" class="retry-button" hidden>제작 기록 다시 불러오기</button>
+            <div class="journal-list" id="journal-list"></div>
+            <button id="entry-more" class="more-button" hidden>제작 기록 더 보기</button>
+            <div class="journal-empty" id="journal-empty" hidden>
+              <span aria-hidden="true">≡</span>
+              <h3 id="journal-empty-title"></h3>
+              <p>
+                아직 남긴 제작 기록이 없어요.<br />새로운 소식이 생기면 이곳에 차곡차곡 기록할게요.
+              </p>
+            </div>
+          </section>
         </div>
         <div id="panel-ideas" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0" hidden>
           <div class="panel-heading">
@@ -252,6 +271,6 @@
     <script src="config.js?v=dbf45a55db4f"></script>
     <script src="backend.js?v=5a1d04cfd803"></script>
     <script src="categories.js?v=e67f927d9cc5"></script>
-    <script src="app.js?v=c7dfa07d5298"></script>
+    <script src="app.js?v=b1603cd35b4b"></script>
   </body>
 </html>
