@@ -378,17 +378,17 @@
     </form>
   </dialog>
 
-  <dialog id="todoDialog">
+  <dialog id="todoDialog" aria-labelledby="todoDialogTitle">
     <form id="todoForm" class="dlg">
       <h2 id="todoDialogTitle">새 할 일</h2>
-      <input id="td-title" class="title-input" placeholder="할 일" autocomplete="off">
+      <input id="td-title" aria-label="할 일 이름" class="title-input" placeholder="할 일" autocomplete="off">
       <div class="row">
         <span class="lbl">마감일</span>
-        <input type="date" id="td-due">
+        <input type="date" id="td-due" aria-label="마감일">
       </div>
       <div class="row">
         <span class="lbl">우선순위</span>
-        <select id="td-prio">
+        <select id="td-prio" aria-label="우선순위">
           <option value="0">낮음</option>
           <option value="1">보통</option>
           <option value="2">높음</option>
@@ -396,11 +396,11 @@
       </div>
       <div class="row">
         <span class="lbl">카테고리</span>
-        <select id="td-cat"></select>
+        <select id="td-cat" aria-label="카테고리"></select>
       </div>
       <p id="td-legacy" class="note" hidden></p>
       <label class="row"><input type="checkbox" id="td-done"> 완료</label>
-      <textarea id="td-memo" placeholder="메모" rows="3"></textarea>
+      <textarea id="td-memo" aria-label="할 일 메모" placeholder="메모" rows="3"></textarea>
       <p id="td-error" class="error" hidden></p>
       <div class="dlg-actions">
         <button type="button" id="td-delete" class="btn danger">삭제</button>
@@ -411,10 +411,10 @@
     </form>
   </dialog>
 
-  <dialog id="projDialog">
+  <dialog id="projDialog" aria-labelledby="projDialogTitle">
     <form id="projForm" class="dlg">
       <h2 id="projDialogTitle">새 목표</h2>
-      <input id="pj-title" class="title-input" placeholder="이름" autocomplete="off">
+      <input id="pj-title" aria-label="목표 이름" class="title-input" placeholder="이름" autocomplete="off">
       <label class="row"><span class="lbl">목표 유형</span><select id="pj-mode">
         <option value="project">일회성 목표</option><option value="daily">날짜별 실천</option><option value="count">횟수 달성</option>
       </select></label>
@@ -423,23 +423,23 @@
       <fieldset id="pj-daily" class="goal-fields" hidden><legend>실천할 요일</legend><div id="pj-weekdays" class="weekday-picks">
         <label><input type="checkbox" value="0" checked>일</label><label><input type="checkbox" value="1" checked>월</label><label><input type="checkbox" value="2" checked>화</label><label><input type="checkbox" value="3" checked>수</label><label><input type="checkbox" value="4" checked>목</label><label><input type="checkbox" value="5" checked>금</label><label><input type="checkbox" value="6" checked>토</label>
       </div></fieldset>
-      <div id="pj-count" hidden><label class="row"><span class="lbl">목표 횟수</span><select id="pj-period"><option value="week">매주</option><option value="month">매월</option></select><input type="number" id="pj-target" min="1" max="999" step="1" value="3"><span>회</span></label></div>
+      <div id="pj-count" hidden><div class="row"><span class="lbl">목표 횟수</span><select id="pj-period" aria-label="반복 기간"><option value="week">매주</option><option value="month">매월</option></select><input type="number" id="pj-target" aria-label="목표 횟수" min="1" max="999" step="1" value="3"><span>회</span></div></div>
       <label class="row" id="pj-share-row" hidden><span class="lbl">실천 기록</span><select id="pj-share"></select></label>
       <p class="note" id="pj-share-note" hidden>같은 활동일 때만 연결하세요. 한 번의 실천을 연결한 목표들에서 함께 계산하고, 전체 실천 건수는 한 번만 셉니다.</p>
       <p class="note" id="pj-policy-note" hidden>반복 조건·기간·기록 연결을 바꾸면 내일부터 적용됩니다. 오늘까지의 기록과 기준은 유지돼요.</p>
       <div id="pj-similar" class="similar-notice" role="status" hidden></div>
       <div class="row">
         <span class="lbl">카테고리</span>
-        <select id="pj-cat"></select>
+        <select id="pj-cat" aria-label="카테고리"></select>
       </div>
       <div class="row">
         <span class="lbl">상태</span>
-        <select id="pj-status">
+        <select id="pj-status" aria-label="목표 상태">
           <option value="active">진행 중</option>
           <option value="done">완료</option>
         </select>
       </div>
-      <textarea id="pj-memo" placeholder="메모 (목표의 이유, 완료 기준 등)" rows="3"></textarea>
+      <textarea id="pj-memo" aria-label="목표 메모" placeholder="메모 (목표의 이유, 완료 기준 등)" rows="3"></textarea>
       <p id="pj-note" class="note"></p>
       <p id="pj-error" class="error" hidden></p>
       <div class="dlg-actions">
