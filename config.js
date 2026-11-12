@@ -6,13 +6,13 @@ window.WORKSPACE_CONFIG = {
   supabaseUrl: 'https://virgpebdldcqwrzsmuqc.supabase.co',
   publishableKey: 'sb_publishable_rx1WEBuWMQOrebbBBfVv1A_bETXuaKz',
   // 빌드·설치 검사를 통과한 Release의 파일이 실제로 공개된 뒤에만 ready를 켭니다.
-  // 관리자에서 등록한 다운로드 주소가 있으면 그 설정을 우선합니다.
+  // 관리자에서 등록한 다운로드 주소를 우선하며, 공식 latest 주소의 버전은 공개 Release를 따릅니다.
   desktopReleases: {
     calendar: {
       ready: true,
       downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
       downloadPlatform: 'windows',
-      downloadVersion: '0.1.1',
+      downloadVersion: '0.1.2',
       downloadRequirements: 'Windows 10/11 · 64비트',
       unsigned: true
     }

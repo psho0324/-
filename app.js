@@ -214,12 +214,21 @@
       if (request !== downloadRequest) return;
       if (!data) throw Error('현재 공개된 다운로드 안내가 없습니다.');
       const release = window.WORKSPACE_CONFIG?.desktopReleases?.[id];
-      // Keep CMS publication visibility and explicit download settings authoritative.
+      // Keep CMS publication visibility, custom URLs and pinned versions authoritative.
       // A released installer can supply defaults before its URL is entered in the CMS.
       if (!data.downloadUrl && release?.ready === true) data = { ...data, ...release };
-      const href = safeDownloadUrl(data.downloadUrl),
-        platform =
-          { windows: 'Windows', macos: 'macOS', linux: 'Linux' }[data.downloadPlatform] || 'PC';
+      const href = safeDownloadUrl(data.downloadUrl);
+      // The official latest URL always serves the published release, even when the
+      // CMS still contains an older version label. A pinned/custom URL stays as entered.
+      if (
+        release?.ready === true &&
+        href === 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe' &&
+        safeDownloadUrl(release.downloadUrl) === href &&
+        release.downloadVersion
+      )
+        data = { ...data, downloadVersion: release.downloadVersion };
+      const platform =
+        { windows: 'Windows', macos: 'macOS', linux: 'Linux' }[data.downloadPlatform] || 'PC';
       $('#download-title').textContent = data.name + ' 다운로드';
       $('#download-description').textContent = data.description || '';
       $('#download-pc-title').textContent = platform + ' 버전';

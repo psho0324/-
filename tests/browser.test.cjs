@@ -213,7 +213,7 @@ function card(page, id, list = 'project-list') {
       ready: false,
       downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
       downloadPlatform: 'windows',
-      downloadVersion: '0.1.1',
+      downloadVersion: '0.1.2',
       downloadRequirements: 'Windows 10/11 · 64비트',
       unsigned: true
     };
@@ -253,7 +253,7 @@ function card(page, id, list = 'project-list') {
       calendarRelease.downloadUrl
     );
     assert.equal(await releasedPage.locator('#download-pc-title').textContent(), 'Windows 버전');
-    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.1');
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.2');
     assert(await releasedPage.locator('#download-unsigned-notice').isVisible());
     assert.match(
       await releasedPage.locator('#download-unsigned-notice').textContent(),
@@ -295,6 +295,49 @@ function card(page, id, list = 'project-list') {
       'Administrator download settings'
     );
     assert(!(await releasedPage.locator('#download-unsigned-notice').isVisible()));
+    await releasedPage.locator('#download-close').click();
+    // The official latest URL uses the published release version, not a stale CMS label.
+    await releasedPage.evaluate(
+      (downloadUrl) =>
+        Object.assign(
+          window.projects.find((project) => project.id === 'calendar'),
+          {
+            downloadUrl,
+            downloadVersion: '0.1.1'
+          }
+        ),
+      calendarRelease.downloadUrl
+    );
+    await releasedPage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await releasedPage.locator('#download-pc-link').waitFor();
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.2');
+    assert.equal(
+      await releasedPage.locator('#download-requirements').textContent(),
+      'Administrator download settings'
+    );
+    assert(await releasedPage.locator('#download-unsigned-notice').isVisible());
+    await releasedPage.locator('#download-close').click();
+    // An explicit versioned release is pinned and keeps the administrator's version.
+    await releasedPage.evaluate(() => {
+      window.projects.find((project) => project.id === 'calendar').downloadUrl =
+        'https://github.com/psho0324/-/releases/download/v0.1.1/MyPlanner-Setup.exe';
+    });
+    await releasedPage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await releasedPage.locator('#download-pc-link').waitFor();
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.1');
+    assert.match(
+      await releasedPage.locator('#download-pc-link').getAttribute('href'),
+      /download\/v0\.1\.1\//
+    );
+    await releasedPage.locator('#download-close').click();
+    // Prepared-but-unpublished release metadata must not relabel a live CMS link.
+    await releasedPage.evaluate((downloadUrl) => {
+      window.projects.find((project) => project.id === 'calendar').downloadUrl = downloadUrl;
+      window.WORKSPACE_CONFIG.desktopReleases.calendar.ready = false;
+    }, calendarRelease.downloadUrl);
+    await releasedPage.getByRole('button', { name: '캘린더 앱 다운로드', exact: true }).click();
+    await releasedPage.locator('#download-pc-link').waitFor();
+    assert.equal(await releasedPage.locator('#download-version').textContent(), '버전 0.1.1');
     await released.close();
     // Journals start with project cards. No entry list is fetched before an explicit choice.
     const journalContext = await context(),
