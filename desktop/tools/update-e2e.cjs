@@ -96,9 +96,28 @@ function processes(){
 }).finally(async()=>{
  if(held)try{fs.rmdirSync(path.join(userData,'planner-data.json'));fs.renameSync(held,path.join(userData,'planner-data.json'))}catch{}
  if(app)try{await app.close()}catch{}
- try{for(const p of processes())if(p.Path?.toLowerCase()===executable.toLowerCase())execFileSync('taskkill.exe',['/PID',String(p.Id),'/T','/F'],{stdio:'ignore'})}catch{}
+ // A tree kill may already remove a later PID from the snapshot. Catch per PID
+ // so that a missing child cannot prevent the actual app process being stopped.
+ for(let attempt=0;attempt<10;attempt++){
+  let remaining=[];
+  try{remaining=processes().filter(p=>p.Path?.toLowerCase()===executable.toLowerCase())}catch{break}
+  if(!remaining.length)break;
+  for(const p of remaining)try{execFileSync('taskkill.exe',['/PID',String(p.Id),'/T','/F'],{stdio:'ignore'})}catch{}
+  await delay(300);
+ }
  if(fs.existsSync(updateConfig))fs.writeFileSync(updateConfig,originalConfig);
  await new Promise(r=>server.close(r));
+ // Chromium/Defender may release a database handle shortly after process exit.
+ // Cleanup concerns only this owned, disposable hosted-runner profile. Preserve
+ // the integration outcome and report leftover files separately if still locked.
+ if(fs.existsSync(path.join(userData,'update-e2e-owner.marker'))){
+  try{fs.rmSync(userData,{recursive:true,force:true,maxRetries:10,retryDelay:100});report.cleanup='removed'}
+  catch(error){
+   report.cleanup={code:error.code,message:error.message};
+   if(!['EBUSY','EPERM','ENOTEMPTY'].includes(error.code)){report.errors.push({message:error.message,stack:error.stack});process.exitCode=1}
+   const text='Owned CI profile cleanup: '+error.message;
+   console.error('::warning title=Updater test temporary profile::'+text.replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A'));
+  }
+ }
  fs.writeFileSync(path.join(__dirname,'../test-results/update-e2e.json'),JSON.stringify(report,null,2));
- if(fs.existsSync(path.join(userData,'update-e2e-owner.marker')))fs.rmSync(userData,{recursive:true,force:true});
 });
