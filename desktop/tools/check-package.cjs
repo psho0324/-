@@ -18,7 +18,7 @@ assert(fs.existsSync(archive), 'Missing built archive: ' + archive);
 const entries = asar.listPackage(archive).map(p => p.replace(/^[/\\]+/, '').replace(/\\/g, '/'));
 // ASAR's lookup API splits on the host separator; keep POSIX only for policy checks.
 const files = entries.filter(p => !asar.statFile(archive, path.normalize(p)).files);
-const required = ['main.js', 'preload.js', 'store.js', 'updater.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css', 'renderer/storage.js', 'renderer/recurrence.js', 'renderer/holidays.js', 'renderer/quickadd.js', 'assets/icon.png', 'assets/icon.ico', 'package.json'];
+const required = ['main.js', 'preload.js', 'store.js', 'updater.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css', 'renderer/storage.js', 'renderer/recurrence.js', 'renderer/holidays.js', 'renderer/quickadd.js', 'renderer/goals.js', 'renderer/theme.js', 'renderer/controls.css', 'assets/icon.png', 'assets/icon.ico', 'package.json'];
 for (const file of required) assert(files.includes(file), 'Required runtime file missing: ' + file);
 // Compare runtime dependency names AND versions with npm's installed production tree.
 const production = new Set();

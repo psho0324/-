@@ -4,6 +4,7 @@
 // {
 //   id, title, memo, color,
 //   allDay: boolean,
+//   timeType: 'point' | 'range' | 'allDay', // point는 start=end, 기존 데이터는 생략 가능
 //   start: "2026-10-25T14:00"  (종일이면 "2026-10-25"),
 //   end:   "2026-10-25T15:00"  (종일이면 "2026-10-25", 마지막 날 포함),
 //   repeat: "none" | "daily" | "weekly" | "monthly" | "yearly",
@@ -65,7 +66,10 @@
       end0 = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1); // 마지막 날 포함
     } else {
       base = parseLocal(ev.start);
-      end0 = ev.end ? parseLocal(ev.end) : new Date(base.getTime() + 3600e3);
+      // 0.1.2의 시각만 일정은 표시 높이와 무관하게 실제 길이가 0입니다.
+      // timeType이 없는 기존 일정의 종료 누락 시 동작은 그대로 보존합니다.
+      end0 = ev.timeType === 'point' ? new Date(base)
+        : ev.end ? parseLocal(ev.end) : new Date(base.getTime() + 3600e3);
     }
     const dur = Math.max(0, end0 - base);
     const calendarDays = ev.allDay ? Math.max(1, Math.round((

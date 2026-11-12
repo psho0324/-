@@ -79,10 +79,22 @@ async function quit() {
   await close;
   running = null;
 }
+const creation = {
+  todos: { button: 'todo-create', dialog: 'todoDialog', form: 'todoForm', input: 'td-title', category: 'td-cat', error: 'td-error', cancel: 'td-cancel', key: 'todos', list: 'todoList', search: 'todoNew' },
+  goals: { button: 'goal-create', dialog: 'projDialog', form: 'projForm', input: 'pj-title', category: 'pj-cat', error: 'pj-error', cancel: 'pj-cancel', key: 'projects', list: 'projList', search: 'projNew' },
+};
+async function openCreation(page, nav) {
+  const fields = creation[nav];
+  await page.locator('[data-nav="' + nav + '"]').click();
+  await page.locator('#' + fields.search).fill('');
+  await page.locator('#' + fields.button).click();
+  await page.locator('#' + fields.dialog).waitFor({ state: 'visible' });
+  return fields;
+}
 async function addTodo(page, title) {
-  await page.locator('[data-nav="todos"]').click();
-  await page.locator('#todoNew').fill(title);
-  await page.locator('#todoNew').press('Enter');
+  const fields = await openCreation(page, 'todos');
+  await page.locator('#' + fields.input).fill(title);
+  await page.locator('#' + fields.form + ' button[type=submit]').click();
   await page.getByText(title, { exact: true }).first().waitFor();
 }
 (async () => {
@@ -134,27 +146,35 @@ async function addTodo(page, title) {
   } else assert.notEqual(updateState.status, 'unsupported');
   record('Updater fixed IPC and source/installed Windows availability match');
 
-  // Regression: use the actual Add buttons (the old smoke only pressed Enter).
-  for (const [nav, inputId, formId, errorId, key, list] of [
-    ['todos', 'todoNew', 'todoAdd', 'todoAddError', 'todos', '#todoList'],
-    ['goals', 'projNew', 'projAdd', 'projAddError', 'projects', '#projList'],
-  ]) {
-    await page.locator('[data-nav="' + nav + '"]').click();
+  // Actual creation dialogs must commit only on Save, never on opening or cancel.
+  for (const nav of ['todos', 'goals']) {
+    const { input: inputId, form: formId, error: errorId, key, list, dialog, cancel } = creation[nav];
     const before = (await page.evaluate(() => window.storage.load()))[key].length;
+    for (const method of ['button', 'Escape']) {
+      await openCreation(page, nav);
+      await page.locator('#' + inputId).fill('SMOKE discarded ' + nav + ' ' + method);
+      if (method === 'button') await page.locator('#' + cancel).click();
+      else await page.keyboard.press('Escape');
+      await page.locator('#' + dialog).waitFor({ state: 'hidden' });
+      await page.waitForTimeout(180);
+      assert.equal((await page.evaluate(() => window.storage.load()))[key].length, before, 'Canceled creation draft leaked to native storage');
+    }
+    await openCreation(page, nav);
     for (const empty of ['', '   ']) {
       await page.locator('#' + inputId).fill(empty);
       await page.locator('#' + formId + ' button[type=submit]').click();
+      assert(await page.locator('#' + dialog).isVisible());
       assert(await page.locator('#' + errorId).isVisible());
       assert.equal(await page.evaluate(() => document.activeElement.id), inputId);
       assert.equal((await page.evaluate(() => window.storage.load()))[key].length, before);
     }
     await page.locator('#' + inputId).fill('SMOKE button ' + nav);
-    assert(!(await page.locator('#' + errorId).isVisible()));
     await page.locator('#' + formId + ' button[type=submit]').click();
-    await page.locator(list).getByText('SMOKE button ' + nav, { exact: true }).waitFor();
+    await page.locator('#' + dialog).waitFor({ state: 'hidden' });
+    await page.locator('#' + list).getByText('SMOKE button ' + nav, { exact: true }).waitFor();
     await until(async () => (await page.evaluate(() => window.storage.load()))[key].some(x => x.title === 'SMOKE button ' + nav), 'Add button did not persist ' + nav);
   }
-  record('Todo and goal Add buttons: blank/whitespace focus + warning, filled titles visible and saved');
+  record('Todo and goal dialogs: canceled drafts absent, blank/whitespace focus + warning, Save persists the completed form');
 
   const categorySnapshot = JSON.stringify((await page.evaluate(() => window.storage.load())).categories);
   await page.mouse.move(1100, 100);
@@ -191,13 +211,12 @@ async function addTodo(page, title) {
   await page.locator('#cat-done').click();
   await until(async () => (await page.evaluate(() => window.storage.load())).categories.some(c => c.name === 'SMOKE category'), 'Confirmed category missing');
   const addedId = (await page.evaluate(() => window.storage.load())).categories.find(c => c.name === 'SMOKE category').id;
-  for (const [nav, inputId, catId, formId] of [
-    ['todos', 'todoNew', 'todoNewCat', 'todoAdd'], ['goals', 'projNew', 'projNewCat', 'projAdd'],
-  ]) {
-    await page.locator('[data-nav="' + nav + '"]').click();
-    await page.locator('#' + inputId).fill('SMOKE linked ' + nav);
-    await page.locator('#' + catId).selectOption(addedId);
-    await page.locator('#' + formId + ' button[type=submit]').click();
+  for (const nav of ['todos', 'goals']) {
+    const fields = await openCreation(page, nav);
+    await page.locator('#' + fields.input).fill('SMOKE linked ' + nav);
+    await page.locator('#' + fields.category).selectOption(addedId);
+    await page.locator('#' + fields.form + ' button[type=submit]').click();
+    await page.locator('#' + fields.dialog).waitFor({ state: 'hidden' });
   }
   await page.locator('[data-nav="settings"]').click();
   await page.getByRole('button', { name: 'SMOKE category 편집·삭제', exact: true }).click();
@@ -219,12 +238,12 @@ async function addTodo(page, title) {
 
   // Submit inside the main process's executeJavaScript and request quit immediately
   // afterward, rather than waiting for the renderer's 100 ms debounce.
-  await page.locator('[data-nav="todos"]').click();
-  await page.locator('#todoNew').fill('SMOKE immediate quit task');
+  await openCreation(page, 'todos');
+  await page.locator('#td-title').fill('SMOKE immediate quit task');
   const first = running;
   const closed = first.waitForEvent('close', { timeout: 15000 });
   await first.evaluate(async ({ BrowserWindow, app }) => {
-    await BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.querySelector("#todoAdd").requestSubmit()');
+    await BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.querySelector("#todoForm").requestSubmit()');
     app.quit();
   }).catch(e => { if (!/closed|destroyed/i.test(e.message)) throw e; });
   await closed; running = null;

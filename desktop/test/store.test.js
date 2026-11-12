@@ -277,4 +277,50 @@ test('배열 형태가 손상된 외부 파일과 백업을 사용하지 않음'
   assert.strictEqual(loaded.recovered,'planner-2026-11-04.json');
 });
 
+test('반복 목표 기록과 시각만 일정은 저장·백업·복원·폴더 이동에서 보존', () => {
+  const home = tmp(), cloud = tmp(), s = mk(home);
+  const original = {
+    ...sample(1),
+    events: [
+      { id: 'point', title: '시작 알림', timeType: 'point', start: '2026-11-04T09:00', end: '2026-11-04T09:00' },
+      { id: 'legacy', title: '기존 한 시간 일정', start: '2026-11-04T10:00', end: '2026-11-04T11:00' },
+    ],
+    goalRecords: [{ id: 'record-1', activityId: 'activity-1', date: '2026-11-04', createdAt: 1793750400000 }],
+    goalDays: [{ activityId: 'activity-1', date: '2026-11-03', status: 'missed' }],
+    settings: { theme: 'dark' },
+  };
+  s.save(original);
+  assert.deepStrictEqual(mk(home).load().data, original);
+  const backup = s.backupNow();
+  s.save({ ...original, goalRecords: [], goalDays: [] });
+  assert.deepStrictEqual(s.restoreBackup(backup), original);
+  assert.deepStrictEqual(mk(home).load().data, original);
+  assert.deepStrictEqual(s.useDir(cloud, 'current', original), original);
+  assert.deepStrictEqual(mk(home).load().data, original);
+});
+
+test('외부 변경으로 들어온 반복 목표 기록을 누락 없이 전달', () => {
+  const home = tmp(), s = mk(home);
+  s.save(sample());
+  const incoming = { ...sample(), goalRecords: [{ id: 'external', activityId: 'a', date: '2026-11-04' }], goalDays: [] };
+  fs.writeFileSync(path.join(home, 'planner-data.json'), JSON.stringify(incoming));
+  assert.deepStrictEqual(s.checkExternal(), incoming);
+});
+
+test('반복 목표 배열이 손상되면 원본 보존 후 정상 백업으로 복구', () => {
+  for (const field of ['goalRecords', 'goalDays']) {
+    const home = tmp(), s = mk(home);
+    const original = { ...sample(), goalRecords: [{ id: 'kept' }], goalDays: [] };
+    s.save(original); s.backupIfNeeded();
+    const malformed = JSON.stringify({ ...original, [field]: { invalid: true } });
+    fs.writeFileSync(path.join(home, 'planner-data.json'), malformed);
+    assert.strictEqual(s.checkExternal(), null);
+    const result = s.load();
+    assert.deepStrictEqual(result.data, original);
+    assert.strictEqual(result.recovered, 'planner-2026-11-04.json');
+    const preserved = fs.readdirSync(home).find(name => name.includes('.corrupt-'));
+    assert.strictEqual(fs.readFileSync(path.join(home, preserved), 'utf8'), malformed);
+  }
+});
+
 console.log(`\n${passed} passed`);

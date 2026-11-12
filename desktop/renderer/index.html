@@ -5,7 +5,9 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>내 플래너</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="controls.css">
 </head>
 <body>
   <div class="app">
@@ -36,7 +38,7 @@
         </button>
         <button type="button" class="nav-item" data-nav="goals">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>
-          <span class="ni-text"><span class="ni-label">목표</span><span class="ni-desc">성과와 작업 진행 관리</span></span>
+          <span class="ni-text"><span class="ni-label">목표</span><span class="ni-desc">완료할 목표와 꾸준한 실천 기록</span></span>
           <span id="navGoalCount" class="tabcount"></span>
         </button>
         <button type="button" class="nav-item" data-nav="stats">
@@ -109,24 +111,13 @@
         </div>
         <div class="page-body">
           <div class="narrow">
-            <form id="todoAdd" class="todo-add" autocomplete="off">
-              <label for="todoNew">할 일 이름</label>
-              <input id="todoNew" placeholder="이름을 입력한 뒤 추가를 누르세요" aria-label="새 할 일" aria-describedby="todoAddError" aria-required="true">
-              <p id="todoAddError" class="field-error" role="alert" hidden>할 일 이름을 먼저 입력해 주세요.</p>
-              <div class="todo-add-row">
-                <input type="date" id="todoNewDue" aria-label="마감일">
-                <select id="todoNewPrio" aria-label="우선순위">
-                  <option value="0">낮음</option>
-                  <option value="1" selected>보통</option>
-                  <option value="2">높음</option>
-                </select>
-                <button type="submit" class="btn primary">할 일 추가</button>
-              </div>
-              <div class="todo-add-row">
-                <select id="todoNewCat" aria-label="카테고리"></select>
-                <select id="todoNewProj" aria-label="목표"></select>
-              </div>
-            </form>
+            <div class="list-tools">
+              <label class="search-field" for="todoNew">할 일 검색
+                <input type="search" id="todoNew" placeholder="이름·메모 검색" autocomplete="off">
+              </label>
+              <button type="button" id="todo-create" class="btn primary">+ 할 일 추가</button>
+            </div>
+            <p class="note">시간 약속은 일정에, 끝내야 하는 작업은 할 일에 적어 보세요. 전체에는 밀린 할 일도 포함돼요.</p>
             <div class="filters">
               <button data-filter="all">전체</button>
               <button data-filter="late">밀린 일 <span id="lateTabCount" class="tabcount"></span></button>
@@ -146,21 +137,21 @@
         <div class="page-head">
           <div>
             <h1>목표</h1>
-            <p class="page-desc">성과와 작업 진행 관리</p>
+            <p class="page-desc">완료할 목표와 꾸준한 실천 기록</p>
           </div>
           <span id="projCount" class="muted"></span>
         </div>
         <div class="page-body">
-          <form id="projAdd" class="todo-add narrow" autocomplete="off">
-            <label for="projNew">목표 이름</label>
-            <input id="projNew" placeholder="이름을 입력한 뒤 추가를 누르세요" aria-label="새 목표" aria-describedby="projAddError" aria-required="true">
-            <p id="projAddError" class="field-error" role="alert" hidden>목표 이름을 먼저 입력해 주세요.</p>
-            <div class="todo-add-row">
-              <input type="date" id="projNewDue" aria-label="목표일">
-              <select id="projNewCat" aria-label="카테고리"></select>
-              <button type="submit" class="btn primary">목표 추가</button>
-            </div>
-          </form>
+          <div class="list-tools narrow">
+            <label class="search-field" for="projNew">목표 검색
+              <input type="search" id="projNew" placeholder="이름·메모 검색" autocomplete="off">
+            </label>
+            <button type="button" id="goal-create" class="btn primary">+ 목표 추가</button>
+          </div>
+          <div class="seg goal-range" role="group" aria-label="반복 목표 기록 기간">
+            <button type="button" id="goal-range-week">이번 주</button>
+            <button type="button" id="goal-range-month">이번 달</button>
+          </div>
           <div class="filters">
             <button data-pfilter="active">진행 중</button>
             <button data-pfilter="done">완료</button>
@@ -209,6 +200,10 @@
             </div>
             <div class="card set-card">
               <h2>화면</h2>
+              <label class="set-row">
+                <span class="set-text"><b>테마</b><span class="muted">시스템 모드는 Windows의 화면 설정을 따라가요.</span></span>
+                <select id="set-theme"><option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option></select>
+              </label>
               <label class="set-row">
                 <span class="set-text"><b>한 주의 시작 요일</b><span class="muted">달력의 첫 번째 칸이 되는 요일이에요.</span></span>
                 <select id="set-weekStart">
@@ -322,6 +317,7 @@
       <h2 id="eventDialogTitle">새 일정</h2>
       <input id="ev-title" class="title-input" placeholder="제목 추가" autocomplete="off">
       <label class="row"><input type="checkbox" id="ev-allday"> 종일</label>
+      <label class="row" id="ev-point-row"><input type="checkbox" id="ev-point"> 시작 시각만 지정 (종료 없음)</label>
       <label class="row" id="ev-done-row" hidden><input type="checkbox" id="ev-done"> 이 일정 완료 <span id="ev-done-date" class="muted"></span></label>
       <div class="row">
         <span class="lbl">시작</span>
@@ -384,7 +380,7 @@
 
   <dialog id="todoDialog">
     <form id="todoForm" class="dlg">
-      <h2>할 일 편집</h2>
+      <h2 id="todoDialogTitle">새 할 일</h2>
       <input id="td-title" class="title-input" placeholder="할 일" autocomplete="off">
       <div class="row">
         <span class="lbl">마감일</span>
@@ -402,10 +398,7 @@
         <span class="lbl">카테고리</span>
         <select id="td-cat"></select>
       </div>
-      <div class="row">
-        <span class="lbl">목표</span>
-        <select id="td-proj"></select>
-      </div>
+      <p id="td-legacy" class="note" hidden></p>
       <label class="row"><input type="checkbox" id="td-done"> 완료</label>
       <textarea id="td-memo" placeholder="메모" rows="3"></textarea>
       <p id="td-error" class="error" hidden></p>
@@ -420,12 +413,21 @@
 
   <dialog id="projDialog">
     <form id="projForm" class="dlg">
-      <h2>목표 편집</h2>
+      <h2 id="projDialogTitle">새 목표</h2>
       <input id="pj-title" class="title-input" placeholder="이름" autocomplete="off">
-      <div class="row">
-        <span class="lbl">목표일</span>
-        <input type="date" id="pj-due">
-      </div>
+      <label class="row"><span class="lbl">목표 유형</span><select id="pj-mode">
+        <option value="project">일회성 목표</option><option value="daily">날짜별 실천</option><option value="count">횟수 달성</option>
+      </select></label>
+      <label class="row"><span class="lbl">시작일</span><input type="date" id="pj-start"></label>
+      <label class="row"><span class="lbl">종료일</span><input type="date" id="pj-due"></label>
+      <fieldset id="pj-daily" class="goal-fields" hidden><legend>실천할 요일</legend><div id="pj-weekdays" class="weekday-picks">
+        <label><input type="checkbox" value="0" checked>일</label><label><input type="checkbox" value="1" checked>월</label><label><input type="checkbox" value="2" checked>화</label><label><input type="checkbox" value="3" checked>수</label><label><input type="checkbox" value="4" checked>목</label><label><input type="checkbox" value="5" checked>금</label><label><input type="checkbox" value="6" checked>토</label>
+      </div></fieldset>
+      <div id="pj-count" hidden><label class="row"><span class="lbl">목표 횟수</span><select id="pj-period"><option value="week">매주</option><option value="month">매월</option></select><input type="number" id="pj-target" min="1" max="999" step="1" value="3"><span>회</span></label></div>
+      <label class="row" id="pj-share-row" hidden><span class="lbl">실천 기록</span><select id="pj-share"></select></label>
+      <p class="note" id="pj-share-note" hidden>같은 활동일 때만 연결하세요. 한 번의 실천을 연결한 목표들에서 함께 계산하고, 전체 실천 건수는 한 번만 셉니다.</p>
+      <p class="note" id="pj-policy-note" hidden>반복 조건·기간·기록 연결을 바꾸면 내일부터 적용됩니다. 오늘까지의 기록과 기준은 유지돼요.</p>
+      <div id="pj-similar" class="similar-notice" role="status" hidden></div>
       <div class="row">
         <span class="lbl">카테고리</span>
         <select id="pj-cat"></select>
@@ -452,7 +454,7 @@
   <dialog id="quickDialog">
     <form id="quickForm" class="dlg quick" autocomplete="off">
       <h2>빠른 추가</h2>
-      <input id="quickInput" class="title-input" placeholder="예) 내일 오후 3시 치과 1시간 #업무" aria-label="빠른 추가 내용">
+      <input id="quickInput" class="title-input" placeholder="예) 9시 수업 2시간짜리 #공부" aria-label="빠른 추가 내용">
       <div class="seg quick-seg" role="group" aria-label="종류">
         <button type="button" data-qkind="auto">자동</button>
         <button type="button" data-qkind="event">일정</button>
@@ -491,6 +493,7 @@
   <script src="holidays.js"></script>
   <script src="quickadd.js"></script>
   <script src="storage.js"></script>
+  <script src="goals.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

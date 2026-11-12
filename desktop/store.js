@@ -12,7 +12,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeKey = (d) => `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 const isPlannerData = (value) => !!value && typeof value === 'object' && !Array.isArray(value) &&
-  ['events', 'todos', 'projects', 'categories'].every(key => value[key] === undefined || Array.isArray(value[key])) &&
+  ['events', 'todos', 'projects', 'categories', 'goalRecords', 'goalDays'].every(key => value[key] === undefined || Array.isArray(value[key])) &&
   (value.settings === undefined || (!!value.settings && typeof value.settings === 'object' && !Array.isArray(value.settings)));
 
 function atomicWrite(file, text) {

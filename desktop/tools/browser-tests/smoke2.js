@@ -40,7 +40,7 @@ const check = (name, ok, extra) => {
   const navLabels = await page.$$eval('.nav-item .ni-label', (e) => e.map((x) => x.textContent));
   check('메뉴 6개 이름', JSON.stringify(navLabels) === JSON.stringify(['홈', '캘린더', '할 일', '목표', '통계', '설정']), navLabels.join(','));
   const descs = await page.$$eval('.nav-item .ni-desc', (e) => e.map((x) => x.textContent));
-  check('메뉴 설명 문구', descs.join('|') === '오늘의 현황을 한눈에|일정과 시간표|작업 관리|성과와 작업 진행 관리|활동 기록과 분석|앱 환경 및 데이터 관리', descs.join('|'));
+  check('메뉴 설명 문구', descs.join('|') === '오늘의 현황을 한눈에|일정과 시간표|작업 관리|완료할 목표와 꾸준한 실천 기록|활동 기록과 분석|앱 환경 및 데이터 관리', descs.join('|'));
   check('통계·설정 메뉴 모두 활성', !(await page.$eval('[data-nav="stats"]', (b) => b.disabled)) && !(await page.$eval('[data-nav="settings"]', (b) => b.disabled)));
   check('카테고리 6개(5 + 미분류), 편집 버튼 5개', (await page.$$('.cat-item')).length === 6 && (await page.$$('.cat-edit')).length === 5);
   check('현재 메뉴(홈) 강조', await page.$eval('[data-nav="home"]', (b) => b.classList.contains('active')));
@@ -193,22 +193,23 @@ const check = (name, ok, extra) => {
   check('할 일 페이지 + 설명', (await visible('#page-todos')) && (await text('#page-todos .page-desc')) === '작업 관리');
   check('할 일 목록 표시', (await page.$$('#todoList .todo')).length > 0, (await page.$$('#todoList .todo')).length);
   check('사이드바에 남은 할 일 수', (await text('#navTodoCount')) !== '', await text('#navTodoCount'));
-  await page.fill('#todoNew', '세금 신고');
-  await page.selectOption('#todoNewCat', { label: '개인' });
-  await page.selectOption('#todoNewProj', { label: '분기 보고서 마무리 (예시)' });
-  await page.press('#todoNew', 'Enter');
+  await page.click('#todo-create');
+  await page.fill('#td-title', '세금 신고');
+  await page.selectOption('#td-cat', { label: '개인' });
+  await page.click('#todoForm button[type=submit]');
   await settle();
-  check('카테고리·목표를 지정해 할 일 추가', (await text('#todoList .todo:has-text("세금 신고") .todo-sub')).includes('분기 보고서'));
+  check('카테고리를 지정해 할 일 추가', (await text('#todoList .todo:has-text("세금 신고") .todo-sub')).includes('개인'));
 
   // ================= 목표 페이지 =================
   await page.click('[data-nav="goals"]');
-  check('목표 페이지 + 설명', (await visible('#page-goals')) && (await text('#page-goals .page-desc')) === '성과와 작업 진행 관리');
+  check('목표 페이지 + 설명', (await visible('#page-goals')) && (await text('#page-goals .page-desc')) === '완료할 목표와 꾸준한 실천 기록');
   check('목표 카드 3개', (await page.$$('article.proj')).length === 3, (await page.$$('article.proj')).length);
   const cnt = await text('article.proj:has-text("분기 보고서") .proj-count');
-  check('할 일 추가가 목표 진행률에 반영(1/4)', cnt.includes('1/4'), cnt);
+  check('기존 연결 목표 진행률 유지(1/3)', cnt.includes('1/3'), cnt);
   await page.screenshot({ path: S + '/shot2-goals.png' });
-  await page.fill('#projNew', '이사 준비');
-  await page.press('#projNew', 'Enter');
+  await page.click('#goal-create');
+  await page.fill('#pj-title', '이사 준비');
+  await page.click('#projForm button[type=submit]');
   await settle();
   check('새 목표 추가', await visible('article.proj:has-text("이사 준비")'));
   await page.click('article.proj:has-text("이사 준비") .proj-head');

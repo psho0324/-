@@ -75,4 +75,42 @@ const days = (occs) => occs.map((o) => fmtDate(o.start));
   } finally { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; }
 }
 
+
+// 9) 시각만 일정은 길이가 0이며 조회 시작 포함/종료 제외 경계를 지킵니다.
+{
+  const at = new Date(2026, 10, 4, 9);
+  const after = new Date(2026, 10, 4, 9, 1);
+  const ev = { id:'point', timeType:'point', start:'2026-11-04T09:00', end:'2026-11-04T09:00' };
+  const list = occurrencesInRange(ev, at, after);
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(+list[0].start, +list[0].end);
+  assert.strictEqual(occurrencesInRange(ev, new Date(2026, 10, 4, 8), at).length, 0);
+  assert.strictEqual(occurrencesInRange(ev, after, new Date(2026, 10, 4, 10)).length, 0);
+  // point 표시는 종료가 누락되거나 오래된 값이 남아도 길이를 다시 만들지 않음.
+  for (const end of [undefined, '2026-11-04T10:00']) {
+    const point = occurrencesInRange({...ev,end}, at, after)[0];
+    assert.strictEqual(+point.start, +point.end);
+  }
+}
+
+// 10) 반복 point도 매일 0분, 종료일/예외를 기존과 똑같이 적용합니다.
+{
+  const ev = { id:'daily-point', timeType:'point', start:'2026-11-01T09:00', end:'2026-11-01T09:00', repeat:'daily', repeatUntil:'2026-11-04', exceptions:['2026-11-03'] };
+  const list = occurrencesInRange(ev, new Date(2026,10,1), new Date(2026,10,6));
+  assert.deepStrictEqual(days(list), ['2026-11-01','2026-11-02','2026-11-04']);
+  assert(list.every(o => +o.start === +o.end));
+}
+
+// 11) 기존 일정의 명시적 기간, 종료 누락 시의 레거시 정책은 바꾸지 않습니다.
+{
+  const span = [new Date(2026,10,4), new Date(2026,10,5)];
+  for (const ev of [
+    { id:'legacy-range', start:'2026-11-04T09:00', end:'2026-11-04T10:00' },
+    { id:'legacy-no-end', start:'2026-11-04T09:00' }
+  ]) {
+    const list = occurrencesInRange(ev, ...span);
+    assert.strictEqual(list[0].end - list[0].start, 3600000);
+  }
+}
+
 console.log('recurrence tests passed');

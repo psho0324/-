@@ -1,15 +1,15 @@
 {
   "name": "my-planner",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "캘린더 + 일정/할 일 관리 데스크톱 앱",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js",
+    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js && node test/theme.test.js && node test/goals.test.js",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "test:desktop": "node tools/desktop-smoke.cjs",
     "test:package": "node tools/check-package.cjs",
-    "test:renderer": "node tools/renderer-audit.cjs"
+    "test:renderer": "node tools/renderer-audit.cjs && node tools/v012-audit.cjs"
   },
   "devDependencies": {
     "electron": "45.3.0",

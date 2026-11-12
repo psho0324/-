@@ -13,6 +13,8 @@ const html = read('index.html');
 const bodyInner = html.split('<body>')[1].split('<script src=')[0].trim();
 
 const scripts = [
+  read('theme.js'),
+  read('goals.js'),
   read('recurrence.js'),
   read('holidays.js'),
   read('quickadd.js'),
@@ -29,6 +31,7 @@ const page = `<meta charset="utf-8">
 <title>내 플래너</title>
 <style>
 ${read('styles.css')}
+${read('controls.css')}
 </style>
 
 ${bodyInner}

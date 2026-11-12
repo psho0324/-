@@ -20,7 +20,7 @@
   ];
 
   // ---------- 상태 ----------
-  let data = { events: [], todos: [], projects: [], categories: [], settings: {} };
+  let data = { events: [], todos: [], projects: [], categories: [], settings: {}, goalRecords: [], goalDays: [] };
   const state = {
     view: 'month',
     cursor: new Date(),
@@ -37,7 +37,7 @@
     projFilter: 'active',
     scrollTop: 7 * HOUR_H,
     hidden: new Set(), // 숨긴 카테고리 키(카테고리 id 또는 NONE)
-    q: '',
+    q: '', todoQ: '', projQ: '', goalRange: 'week',
     expanded: new Set(), // 할 일을 모두 펼친 목표 id
   };
 
@@ -213,8 +213,15 @@
   const catKey = (id) => (catById(id) ? id : NONE);
   const isCatVisible = (id) => !state.hidden.has(catKey(id));
 
+  const currentQuery = () => state.page === 'todos' ? state.todoQ : state.page === 'goals' ? state.projQ : state.q;
+  function setSearch(value) {
+    if (state.page === 'todos') state.todoQ = value;
+    else if (state.page === 'goals') state.projQ = value;
+    else state.q = value;
+    render();
+  }
   function matchQ(fields) {
-    const q = state.q.trim().toLowerCase();
+    const q = currentQuery().trim().toLowerCase();
     if (!q) return true;
     return fields.some((f) => (f || '').toLowerCase().includes(q));
   }
@@ -306,8 +313,8 @@
       item.style.setProperty('--c', c.color);
       box.append(item);
     }
-    $('#fclear').hidden = !(state.hidden.size > 0 || state.q.trim());
-    $('#sideToggle').classList.toggle('filtered', state.hidden.size > 0 || !!state.q.trim()); // 좁은 화면에서 필터가 켜져 있음을 알려요
+    $('#fclear').hidden = !(state.hidden.size > 0 || currentQuery().trim());
+    $('#sideToggle').classList.toggle('filtered', state.hidden.size > 0 || !!currentQuery().trim()); // 좁은 화면에서 필터가 켜져 있음을 알려요
 
     document.querySelectorAll('[data-nav]').forEach((b) => b.classList.toggle('active', b.dataset.nav === state.page));
     // 할 일 탭에서 처리할 것 = 안 끝난 할 일(밀린 것 포함) + 밀린 일정
@@ -363,7 +370,7 @@
   }
   const isLateTodo = (t, todayKey) => !t.done && !!t.due && t.due < todayKey;
   function isLateOcc(o, info = backlogInfo()) {
-    return !isRepeating(o.ev) && o.end <= info.today && fmtDate(o.start) >= info.since && !isOccDone(o.ev, o);
+    return !isRepeating(o.ev) && o.start < info.today && o.end <= info.today && fmtDate(o.start) >= info.since && !isOccDone(o.ev, o);
   }
   const calOccs = (days) => {
     const info = backlogInfo();
@@ -434,6 +441,8 @@
   }
 
   const isAllDayLike = (o) => o.ev.allDay || o.end - o.start >= DAY_MS;
+  const isPoint = ev => !ev.allDay && ev.timeType === 'point';
+  const occurrenceTime = o => isPoint(o.ev) ? `${hhmm(o.start)} · 시각만` : `${hhmm(o.start)} – ${fmtDate(o.end) !== fmtDate(o.start) ? shortDate(fmtDate(o.end)) + ' ' : ''}${hhmm(o.end)}`;
   const cmpOcc = (a, b) => (isAllDayLike(b) - isAllDayLike(a)) || a.start - b.start;
   const todosForDay = (day) =>
     data.todos.filter((t) => t.due === fmtDate(day) && passTodo(t) && !isLateTodo(t, fmtDate(new Date()))).sort((a, b) => a.done - b.done);
@@ -762,13 +771,14 @@
 
   // ---------- 주/일 뷰 ----------
   function layoutDay(items) {
-    items.sort((a, b) => a.s - b.s || b.le - a.le);
+    const start = item => item.layoutStart ?? item.s;
+    items.sort((a, b) => start(a) - start(b) || b.le - a.le);
     let cluster = [];
     let clusterEnd = -1;
     const flush = () => {
       const cols = [];
       for (const it of cluster) {
-        let c = cols.findIndex((end) => end <= it.s);
+        let c = cols.findIndex((end) => end <= start(it));
         if (c < 0) { c = cols.length; cols.push(0); }
         cols[c] = it.le;
         it.col = c;
@@ -777,7 +787,7 @@
       cluster = [];
     };
     for (const it of items) {
-      if (cluster.length && it.s >= clusterEnd) { flush(); clusterEnd = -1; }
+      if (cluster.length && start(it) >= clusterEnd) { flush(); clusterEnd = -1; }
       cluster.push(it);
       clusterEnd = Math.max(clusterEnd, it.le);
     }
@@ -839,16 +849,17 @@
       const items = dayOccs(occs, d)
         .filter((o) => !isAllDayLike(o))
         .map((o) => {
-          const s = Math.min(Math.max(0, (o.start - ds) / 60000), 24 * 60 - 20);
+          const s = Math.min(Math.max(0, (o.start - ds) / 60000), isPoint(o.ev) ? 24 * 60 - 1 : 24 * 60 - 20);
           const e = Math.min(24 * 60, (o.end - ds) / 60000);
-          return { o, s, e: Math.max(e, s + 20), le: Math.max(e, s + 30) };
+          const latePoint = isPoint(o.ev) && s > 24 * 60 - 50;
+          return { o, s, layoutStart: latePoint ? Math.max(0,s-50) : s, e: Math.max(e, s + 20), le: latePoint ? s+1 : Math.max(e, s + (isPoint(o.ev) ? 50 : 30)) };
         });
       layoutDay(items);
 
       for (const it of items) {
         const ev = it.o.ev;
         const el = h('div', {
-          class: 'tg-event' + (isOccDone(ev, it.o) ? ' done' : ''),
+          class: 'tg-event' + (isPoint(ev) ? ' point-event' + (it.s > 24 * 60 - 50 ? ' point-late' : '') : '') + (isOccDone(ev, it.o) ? ' done' : ''),
           title: ev.title || '',
           style: {
             top: `${(it.s / 60) * HOUR_H}px`,
@@ -863,7 +874,7 @@
           },
         },
         h('div', { class: 't', text: (ev.repeat && ev.repeat !== 'none' ? '↻ ' : '') + (ev.title || '(제목 없음)') }),
-        h('div', { class: 'time', text: `${hhmm(it.o.start)} – ${hhmm(it.o.end)}` }));
+        h('div', { class: 'time', text: occurrenceTime(it.o) }));
         el.style.setProperty('--c', evColor(ev));
         enableTimeDrag(el, ev, it.o, days);
         col.append(el);
@@ -918,7 +929,7 @@
     }
     // 밀린 할 일은 "밀린 일" 탭에서 따로 봅니다. (전체·진행 중 목록에서는 제외)
     const todayKeyL = fmtDate(new Date());
-    const visible = data.todos.filter((t) => passTodo(t) && !isLateTodo(t, todayKeyL));
+    const visible = data.todos.filter(passTodo);
     let todos = visible.slice();
     if (state.todoFilter === 'active') todos = todos.filter((t) => !t.done);
     if (state.todoFilter === 'done') todos = todos.filter((t) => t.done);
@@ -950,7 +961,7 @@
       const sub = [proj ? proj.title : null, cat ? catName(cat) : null].filter(Boolean).join(' · ');
       list.append(h('div', { class: 'todo' + (t.done ? ' done' : '') },
         box,
-        h('span', { class: 'prio p' + (t.priority ?? 1), title: ['낮음', '보통', '높음'][t.priority ?? 1] }),
+        h('span', { class: 'priority-label p' + (t.priority ?? 1), text: '우선순위: ' + ['낮음', '보통', '높음'][t.priority ?? 1] }),
         h('span', { class: 'todo-main' },
           h('span', { class: 'todo-title', text: t.title, onclick: () => openTodoDialog(t) }),
           sub ? h('span', { class: 'todo-sub' },
@@ -963,6 +974,7 @@
 
   // ---------- 목표 ----------
   function projectStats(p) {
+    if (window.PlannerGoals.isRepeating(p)) return { ...window.PlannerGoals.stats(p, data.goalRecords, { range: state.goalRange, now: new Date(), weekStart: weekStart(), goalDays: data.goalDays }), ts: [] };
     const ts = data.todos.filter((t) => t.projectId === p.id);
     const done = ts.filter((t) => t.done).length;
     const total = ts.length;
@@ -1000,7 +1012,7 @@
     const meta = [cat ? catName(cat) : '미분류', p.due ? `목표일 ${shortDate(p.due)}` : null].filter(Boolean).join(' · ');
     const countText = st.total
       ? `${st.done}/${st.total} 완료 · ${st.pct}%`
-      : finished ? '완료' : '할 일을 추가하면 진행률이 보여요';
+      : finished ? '완료' : p.mode === 'project' ? '완료 기준에 도달하면 완료로 표시하세요' : '할 일을 추가하면 진행률이 보여요';
 
     const input = h('input', { placeholder: '이 목표에 할 일 추가', 'aria-label': `${p.title}에 할 일 추가`, 'data-padd': p.id });
     const form = h('form', {
@@ -1053,7 +1065,303 @@
       h('div', { class: 'proj-count muted', text: countText }),
       rows.slice(0, limit).map((t) => miniTodo(t)),
       extra.length ? h('div', { class: 'proj-extra' }, extra) : null,
-      form);
+      p.mode === 'project' ? h('button', { type:'button', class:'btn', onclick: () => { setProjectStatus(p, finished ? 'active' : 'done'); save(); render(); } }, finished ? '다시 진행하기' : '목표 완료로 표시') : form);
+  }
+
+  function habitCard(goal) {
+    const G = window.PlannerGoals;
+    const st = G.stats(goal, data.goalRecords, {
+      range: state.goalRange,
+      now: new Date(),
+      weekStart: weekStart(),
+      goalDays: data.goalDays
+    });
+    const policy = G.policyAt(goal, fmtDate(new Date())) || goal;
+    const activity = policy.activityId || goal.id;
+    const color = catById(goal.categoryId)?.color || UNCAT_COLOR;
+    const card = h('article', { class: 'proj habit-card', 'data-goal-id': goal.id });
+    card.append(
+      h(
+        'button',
+        { type: 'button', class: 'habit-heading', onclick: () => openProjectDialog(goal) },
+        h('span', { class: 'dot', style: { background: color } }),
+        h('span', { class: 'proj-title', text: goal.title }),
+        h('span', { class: 'muted', text: '편집' })
+      )
+    );
+    card.append(
+      h('p', {
+        class: 'habit-meta muted',
+        text:
+          policy.mode === 'daily'
+            ? '날짜별 실천 · 하루 한 번 완료'
+            : `${policy.period === 'month' ? '매월' : '매주'} ${policy.target}회 · 기록 건수로 계산`
+      })
+    );
+    const percent = st.pct == null ? 0 : st.pct;
+    card.append(
+      h(
+        'div',
+        {
+          class: 'progress',
+          role: 'progressbar',
+          'aria-label': goal.title + ' 달성률',
+          'aria-valuemin': '0',
+          'aria-valuemax': '100',
+          'aria-valuenow': String(percent)
+        },
+        h('span', { style: { width: percent + '%', background: color } })
+      )
+    );
+    card.append(
+      h('p', {
+        class: 'habit-summary',
+        text: `${st.targetLabel}: ${st.done}/${st.total}${policy.mode === 'daily' ? '일' : '회'} · ${st.pct == null ? '집계 전' : st.rawPct + '%'}`
+      })
+    );
+    card.append(
+      h('p', {
+        class: 'habit-note muted',
+        text:
+          policy.mode === 'count'
+            ? `${state.goalRange === 'month' ? '이번 달' : '이번 주'} 실천 ${st.viewCount}건 · 달성률은 ${policy.period === 'month' ? '월간' : '주간'} 목표 기준입니다.`
+            : `${state.goalRange === 'month' ? '이번 달' : '이번 주'} 실천 ${st.viewCount}건 · 못함 ${st.missed}일 · 미기록 ${st.unrecorded}일${st.pending ? ' · 오늘 진행 중' : ''}`
+      })
+    );
+    if (policy.mode === 'daily')
+      card.append(
+        h('p', {
+          class: 'habit-note muted',
+          text: '미래 날짜와 오늘 진행 중인 항목은 실천율 분모에서 제외합니다.'
+        })
+      );
+    if (st.error) card.append(h('p', { class: 'error', text: st.error }));
+    if (
+      Array.isArray(goal.policyHistory) &&
+      goal.policyHistory.some((p) => p.effectiveFrom > fmtDate(new Date()))
+    )
+      card.append(
+        h('p', {
+          class: 'habit-note',
+          text: '변경한 조건은 내일부터 적용돼요. 오늘까지는 기존 기준으로 집계합니다.'
+        })
+      );
+    const peers = data.projects.filter(
+      (p) =>
+        p.id !== goal.id &&
+        G.isRepeating(p) &&
+        (G.policyAt(p, fmtDate(new Date()))?.activityId || p.id) === activity
+    );
+    if (peers.length)
+      card.append(
+        h('p', {
+          class: 'habit-group muted',
+          text: '같은 실천 기록 사용: ' + peers.map((p) => p.title).join(', ')
+        })
+      );
+    const today = fmtDate(new Date());
+    const dateInput = h('input', {
+      type: 'date',
+      class: 'habit-record-date',
+      value: policy.due && policy.due < today ? policy.due : today,
+      max: today,
+      'aria-label': goal.title + ' 실천 날짜'
+    });
+    const days = h('div', { class: 'habit-days', 'aria-label': goal.title + ' 날짜별 기록' });
+    const weekdays = h('div', { class: 'habit-week-labels', 'aria-hidden': 'true' });
+    for (let i = 0; i < 7; i++) weekdays.append(h('span', { text: DOW[(i + weekStart()) % 7] }));
+    const offset = (parseLocal(st.from).getDay() - weekStart() + 7) % 7;
+    for (let i = 0; i < offset; i++) days.append(h('span', { 'aria-hidden': 'true' }));
+    const statusNames = {
+      done: '완료',
+      missed: '못함',
+      unrecorded: '미기록',
+      pending: '진행 중',
+      future: '예정',
+      off: '대상 아님'
+    };
+    for (const day of st.days)
+      days.append(
+        h('button', {
+          type: 'button',
+          'data-status': day.status,
+          text: String(Number(day.date.slice(-2))),
+          title: `${day.date} ${statusNames[day.status]}${day.records ? ' ' + day.records + '건' : ''}`,
+          'aria-label': `${day.date} ${statusNames[day.status]}`,
+          disabled: day.date > today || !day.scheduled,
+          onclick: () => {
+            dateInput.value = day.date;
+            dateInput.focus();
+          }
+        })
+      );
+    card.append(
+      weekdays,
+      days,
+      h('p', { class: 'habit-note muted', text: '완료 ● · 못함 × · 미기록 ○ · 오늘 진행 중 ◐' })
+    );
+    const error = h('p', { class: 'error habit-record-error', role: 'alert', hidden: true });
+    function recordPolicy() {
+      if (fmtDate(new Date()) !== today) {
+        render();
+        toast('날짜가 바뀌어 기록 화면을 갱신했어요. 날짜를 확인한 뒤 다시 기록해 주세요.');
+        return null;
+      }
+      const date = dateInput.value;
+      const p = G.policyAt(goal, date);
+      const weekday = G.validDate(date) ? parseLocal(date).getDay() : -1;
+      if (
+        !G.validDate(date) ||
+        date > today ||
+        !G.isRepeating(p) ||
+        G.validate(p) ||
+        date < p.startDate ||
+        (p.due && date > p.due) ||
+        (p.mode === 'daily' && !p.weekdays.includes(weekday))
+      ) {
+        error.textContent = '목표 기간과 요일에 해당하는 오늘 또는 지난 날짜를 골라 주세요.';
+        error.hidden = false;
+        return null;
+      }
+      return { date, policy: p, activityId: p.activityId || goal.id };
+    }
+    const actions = h(
+      'div',
+      { class: 'habit-actions' },
+      dateInput,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn primary',
+          'data-record': goal.id,
+          onclick: () => {
+            const r = recordPolicy();
+            if (!r) return;
+            if (
+              r.policy.mode === 'daily' &&
+              data.goalRecords.some(
+                (record) => record.activityId === r.activityId && record.date === r.date
+              )
+            ) {
+              error.textContent =
+                '이 날짜의 실천은 이미 기록돼 있어요. 횟수를 더 기록하려면 횟수형 목표에서 기록하세요.';
+              error.hidden = false;
+              return;
+            }
+            const snap = takeSnapshot();
+            data.goalRecords.push({
+              id: uid(),
+              activityId: r.activityId,
+              date: r.date,
+              createdAt: Date.now()
+            });
+            data.goalDays = data.goalDays.filter((d) => !(d.goalId === goal.id && d.date === r.date));
+            save();
+            render();
+            offerUndo('실천을 기록했어요. 연결된 목표에도 함께 반영됩니다.', snap);
+          }
+        },
+        '실천 기록'
+      )
+    );
+    if (policy.mode === 'daily')
+      actions.append(
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn',
+            'data-missed': goal.id,
+            onclick: () => {
+              const r = recordPolicy();
+              if (!r) return;
+              if (
+                data.goalRecords.some(
+                  (record) => record.activityId === r.activityId && record.date === r.date
+                )
+              ) {
+                error.textContent =
+                  '이미 실천 기록이 있는 날짜예요. 기록을 취소한 뒤 못함으로 표시해 주세요.';
+                error.hidden = false;
+                return;
+              }
+              const snap = takeSnapshot();
+              data.goalDays = data.goalDays.filter(
+                (d) => !(d.goalId === goal.id && d.date === r.date)
+              );
+              data.goalDays.push({ goalId: goal.id, date: r.date, status: 'missed' });
+              save();
+              render();
+              offerUndo('못함으로 표시했어요.', snap);
+            }
+          },
+          '못함'
+        )
+      );
+    if (policy.mode === 'daily')
+      actions.append(
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn',
+            'data-clear-day': goal.id,
+            onclick: () => {
+              const r = recordPolicy();
+              if (!r) return;
+              const snap = takeSnapshot();
+              data.goalDays = data.goalDays.filter(
+                (d) => !(d.goalId === goal.id && d.date === r.date)
+              );
+              save();
+              render();
+              offerUndo('못함 표시를 지웠어요. 실천 기록은 유지됩니다.', snap);
+            }
+          },
+          '못함 해제'
+        )
+      );
+    card.append(actions, error);
+    const records = data.goalRecords
+      .filter(
+        (record) =>
+          st.days.some((day) => day.date === record.date && day.records > 0) &&
+          record.date <= today &&
+          (G.policyAt(goal, record.date)?.activityId || goal.id) === record.activityId
+      )
+      .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+    const details = h(
+      'details',
+      { class: 'habit-records' },
+      h('summary', { text: `기간 내 실천 기록 ${records.length}건 · 취소하기` })
+    );
+    for (const record of records)
+      details.append(
+        h(
+          'div',
+          { class: 'habit-record-item' },
+          h('span', { text: record.date }),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn',
+              'data-unrecord': record.id,
+              onclick: () => {
+                const snap = takeSnapshot();
+                data.goalRecords = data.goalRecords.filter((r) => r.id !== record.id);
+                save();
+                render();
+                offerUndo('실천 기록을 취소했어요. 이 기록을 공유하는 목표에도 반영됩니다.', snap);
+              }
+            },
+            '기록 취소'
+          )
+        )
+      );
+    card.append(details);
+    return card;
   }
 
   function renderProjects() {
@@ -1075,15 +1383,22 @@
           : state.projFilter === 'done' ? '완료한 목표가 없어요' : '이루고 싶은 목표를 추가해 보세요',
       }));
     }
-    for (const p of ps) list.append(projectCard(p));
+    for (const p of ps) list.append(window.PlannerGoals.isRepeating(p) ? habitCard(p) : projectCard(p));
+    for (const range of ['week','month']) { $('#goal-range-'+range).classList.toggle('active',state.goalRange===range); $('#goal-range-'+range).setAttribute('aria-pressed',String(state.goalRange===range)); }
+    let summary = $('#goal-activity-summary');
+    if (!summary) { summary=h('p',{id:'goal-activity-summary',class:'note'}); $('#projList').before(summary); }
+    const now = new Date(), from = state.goalRange === 'month' ? new Date(now.getFullYear(),now.getMonth(),1) : addDays(startOfDay(now),-((now.getDay()-weekStart()+7)%7));
+    const to = state.goalRange === 'month' ? new Date(now.getFullYear(),now.getMonth()+1,0) : addDays(from,6);
+    const count = new Set(data.goalRecords.filter(r=>r.date>=fmtDate(from)&&r.date<=fmtDate(to)&&r.date<=fmtDate(now)).map(r=>r.id)).size;
+    summary.textContent=`${state.goalRange==='month'?'이번 달':'이번 주'} 실천 ${count}건 · 연결된 목표에 반영해도 전체에서는 한 번만 셉니다.`;
     $('#projCount').textContent = `진행 중 ${visible.filter((p) => p.status !== 'done').length}개`;
     document.querySelectorAll('[data-pfilter]').forEach((b) => b.classList.toggle('active', b.dataset.pfilter === state.projFilter));
   }
 
   function renderQuickSelects() {
-    fillSelect($('#todoNewCat'), catOptions('미분류'));
-    fillSelect($('#todoNewProj'), projOptions('목표 없음', true));
-    fillSelect($('#projNewCat'), catOptions('미분류'));
+    $('#searchBox').value = currentQuery();
+    $('#todoNew').value = state.todoQ;
+    $('#projNew').value = state.projQ;
   }
 
   // ---------- 홈 ----------
@@ -1179,7 +1494,7 @@
     box.addEventListener('change', () => { setOccDone(o.ev, key, box.checked); save(); render(); });
     const when = mode === 'late'
       ? `${shortDate(key)} ${allDay ? '종일' : hhmm(o.start)}`
-      : allDay ? '종일' : `${hhmm(o.start)} – ${hhmm(o.end)}`;
+      : allDay ? '종일' : occurrenceTime(o);
     const row = h('div', {
       class: 'sch' + (done ? ' done' : ''),
       onclick: () => openEventDialog(o.ev, { occDate: key }),
@@ -1202,7 +1517,7 @@
     const late = overdue ? Math.round((parseLocal(todayKey) - parseLocal(t.due)) / DAY_MS) : 0;
     return h('div', { class: 'todo' + (t.done ? ' done' : '') },
       box,
-      h('span', { class: 'prio p' + (t.priority ?? 1), title: ['낮음', '보통', '높음'][t.priority ?? 1] }),
+      h('span', { class: 'priority-label p' + (t.priority ?? 1), text: '우선순위: ' + ['낮음', '보통', '높음'][t.priority ?? 1] }),
       h('span', { class: 'todo-main' },
         h('span', { class: 'todo-title', text: t.title, onclick: () => openTodoDialog(t) }),
         proj ? h('span', { class: 'todo-sub', text: proj.title }) : null),
@@ -1319,7 +1634,7 @@
           ring(st.pct, color, 54, 7, h('span', { text: `${st.pct}%` })),
           h('div', { class: 'goal-info' },
             h('span', { class: 'goal-title', text: p.title }),
-            h('span', { class: 'muted', text: st.total ? `${st.done}/${st.total} 완료` : '할 일을 연결해 보세요' })),
+            h('span', { class: 'muted', text: window.PlannerGoals.isRepeating(p) ? `${st.targetLabel} ${st.done}/${st.total} · ${st.pct == null ? '집계 전' : st.rawPct+'%'}` : st.total ? `${st.done}/${st.total} 완료` : p.mode === 'project' ? '완료 기준을 향해 진행 중' : '할 일을 연결해 보세요' })),
           dd ? h('span', { class: 'badge' + dd.cls, text: dd.text }) : null);
       }) : h('div', { class: 'empty-inline' }, '진행 중인 목표가 없어요.',
         h('button', { type: 'button', class: 'btn', onclick: () => goPage('goals') }, '목표 만들기')));
@@ -1339,8 +1654,9 @@
     if (state.quickKind === 'auto' || r.kind === state.quickKind) return r;
     if (state.quickKind === 'event') {
       const d = r.date || fmtDate(new Date());
-      return { ...r, kind: 'event', date: d, allDay: true, start: d, end: d };
+      return { ...r, kind: 'event', date: d, allDay: true, timeType: 'allDay', start: d, end: d };
     }
+    if (r.start && !r.allDay) return { ...r, invalid: true, error: '시간을 지정한 내용은 일정으로 저장해 주세요. 할 일로 바꾸려면 시각을 지워 주세요.' };
     return { ...r, kind: 'todo', allDay: false, start: null, end: null }; // 날짜는 마감일로 유지
   }
 
@@ -1355,7 +1671,8 @@
     const parts = [];
     if (r.kind === 'event') {
       if (r.allDay) parts.push(`${dateText(r.date)} 종일`);
-      else parts.push(`${dateText(r.date)} ${r.start.slice(11)}–${r.end.slice(11)}`);
+      else if (r.timeType === 'point') parts.push(`${dateText(r.date)} ${r.start.slice(11)} · 종료 없음`);
+      else parts.push(`${dateText(r.date)} ${r.start.slice(11)}–${r.end.slice(0,10) !== r.start.slice(0,10) ? dateText(r.end.slice(0,10)) + ' ' : ''}${r.end.slice(11)}`);
     } else {
       parts.push(r.date ? `${dateText(r.date)}까지` : '마감일 없음');
     }
@@ -1393,7 +1710,7 @@
       const cat = r.categoryId ? catById(r.categoryId) : null;
       data.events.push({
         id: uid(), title: r.title, memo: '', color: cat ? cat.color : COLORS[0], categoryId: r.categoryId || null,
-        allDay: r.allDay, start: r.start, end: r.end, repeat: 'none', repeatInterval: 1, repeatUntil: null,
+        allDay: r.allDay, timeType: r.timeType, start: r.start, end: r.end, repeat: 'none', repeatInterval: 1, repeatUntil: null,
         exceptions: [], doneOn: {}, reminder: null,
       });
     } else {
@@ -1526,7 +1843,7 @@
     // 카테고리별 일정 시간
     const hours = new Map();
     for (const o of rangeOccs) {
-      if (isAllDayLike(o)) continue;
+      if (isAllDayLike(o) || isPoint(o.ev)) continue;
       const k = o.ev.categoryId && catById(o.ev.categoryId) ? o.ev.categoryId : NONE;
       hours.set(k, (hours.get(k) || 0) + (o.end - o.start) / 36e5);
     }
@@ -1683,7 +2000,8 @@
     // 반복 일정은 끝나는 날짜 대신 "반복 종료일"을 쓰므로 종료 날짜는 시작일과 같게 고정
     if (repeating) $('#ev-end-date').value = $('#ev-start-date').value;
     $('#ev-end-date').hidden = repeating;
-    $('#ev-end-row').hidden = allDay && repeating;
+    $('#ev-point-row').hidden = allDay;
+    $('#ev-end-row').hidden = (allDay && repeating) || (!allDay && $('#ev-point').checked);
 
     // 카테고리를 고르면 그 카테고리 색을 쓰므로 색상 선택은 미분류일 때만 보여줌
     $('#ev-color-row').hidden = !!$('#ev-cat').value;
@@ -1722,6 +2040,7 @@
     $('#ev-done-date').textContent = canCheck ? `(${shortDate(opts.occDate)})` : '';
     $('#ev-title').value = ev?.title || '';
     $('#ev-allday').checked = allDay;
+    $('#ev-point').checked = isPoint(ev || {}) || (!!ev && !ev.allDay && ev.start === ev.end);
     $('#ev-start-date').value = sd;
     $('#ev-start-time').value = st;
     $('#ev-end-date').value = ed;
@@ -1755,7 +2074,8 @@
     const allDay = $('#ev-allday').checked;
     const sd = $('#ev-start-date').value;
     // 반복 일정은 하루짜리 일정으로 저장 (끝나는 날짜는 "반복 종료일"이 정함)
-    const ed = $('#ev-repeat').value !== 'none' ? sd : ($('#ev-end-date').value || sd);
+    const point = !allDay && $('#ev-point').checked;
+    const ed = point || $('#ev-repeat').value !== 'none' ? sd : ($('#ev-end-date').value || sd);
     if (!sd) return showError('#ev-error', '시작 날짜를 입력해 주세요.');
 
     let start, end;
@@ -1764,10 +2084,10 @@
       end = ed < sd ? sd : ed;
     } else {
       const st = $('#ev-start-time').value || '09:00';
-      const et = $('#ev-end-time').value || st;
+      const et = point ? st : ($('#ev-end-time').value || st);
       start = `${sd}T${st}`;
       end = `${ed}T${et}`;
-      if (end < start) {
+      if (end < start || (!point && end === start)) {
         return showError('#ev-error', $('#ev-repeat').value !== 'none'
           ? '종료 시간이 시작 시간보다 빨라요. 반복 일정은 하루 안에서 끝나야 해요.'
           : '종료 시각이 시작 시각보다 빠를 수 없어요.');
@@ -1798,6 +2118,7 @@
       color: selectedColor,
       categoryId: $('#ev-cat').value || null,
       allDay,
+      timeType: allDay ? 'allDay' : point ? 'point' : 'range',
       start,
       end,
       repeat,
@@ -1850,17 +2171,21 @@
   const tdDlg = $('#todoDialog');
   let editingTodo = null;
 
-  function openTodoDialog(t) {
+  function openTodoDialog(t = null) {
     editingTodo = t;
-    $('#td-title').value = t.title;
-    $('#td-due').value = t.due || '';
-    $('#td-prio').value = String(t.priority ?? 1);
-    $('#td-done').checked = !!t.done;
-    $('#td-memo').value = t.memo || '';
+    $('#todoDialogTitle').textContent = t ? '할 일 편집' : '새 할 일';
+    $('#td-title').value = t?.title || '';
+    $('#td-due').value = t?.due || '';
+    $('#td-prio').value = String(t?.priority ?? 1);
+    $('#td-done').checked = !!t?.done;
+    $('#td-memo').value = t?.memo || '';
     fillSelect($('#td-cat'), catOptions('미분류'));
-    $('#td-cat').value = catById(t.categoryId) ? t.categoryId : '';
-    fillSelect($('#td-proj'), projOptions('목표 없음', false));
-    $('#td-proj').value = projById(t.projectId) ? t.projectId : '';
+    $('#td-cat').value = t ? (catById(t.categoryId) ? t.categoryId : '') : defaultCatForNew();
+    $('#td-delete').hidden = !t;
+    $('#td-legacy').hidden = !t?.projectId;
+    $('#td-legacy').textContent = t?.projectId
+      ? `기존 목표 연결: ${projById(t.projectId)?.title || '이전 목표'} (기록을 유지합니다)`
+      : '';
     showError('#td-error', '');
     tdDlg.showModal();
     $('#td-title').focus();
@@ -1868,53 +2193,185 @@
 
   function saveTodo() {
     const title = $('#td-title').value.trim();
-    if (!title) return showError('#td-error', '할 일 제목을 입력해 주세요.');
-    Object.assign(editingTodo, {
+    if (!title) {
+      $('#td-title').focus();
+      return showError('#td-error', '할 일 제목을 입력해 주세요.');
+    }
+    const t = editingTodo || { id: uid(), createdAt: Date.now(), done: false, projectId: null };
+    Object.assign(t, {
       title,
       due: $('#td-due').value || null,
       priority: Number($('#td-prio').value),
       memo: $('#td-memo').value,
-      categoryId: $('#td-cat').value || null,
-      projectId: $('#td-proj').value || null,
+      categoryId: $('#td-cat').value || null
     });
-    if (!!editingTodo.done !== $('#td-done').checked) setTodoDone(editingTodo, $('#td-done').checked);
+    if (!!t.done !== $('#td-done').checked) setTodoDone(t, $('#td-done').checked);
+    if (!editingTodo) {
+      data.todos.push(t);
+      state.todoQ = '';
+      state.todoFilter = 'all';
+      state.hidden.delete(catKey(t.categoryId));
+      data.settings.hiddenCategories = [...state.hidden];
+    }
     save();
     tdDlg.close();
     render();
   }
 
-  // ---------- 목표 대화상자 ----------
+  // ---------- 목표 작성 / 편집 ----------
   const pjDlg = $('#projDialog');
   let editingProj = null;
-
-  function openProjectDialog(p) {
+  const goalDraft = () => ({
+    ...(editingProj || {}),
+    id: editingProj?.id || 'new-goal',
+    title: $('#pj-title').value.trim(),
+    mode: $('#pj-mode').value,
+    startDate: $('#pj-start').value || (editingProj?.mode ? editingProj.startDate : null),
+    due: $('#pj-due').value || null,
+    period: $('#pj-period').value,
+    target: Number($('#pj-target').value),
+    weekdays: [...$('#pj-weekdays').querySelectorAll('input:checked')].map((input) =>
+      Number(input.value)
+    ),
+    activityId: $('#pj-share').value || editingProj?.id || null,
+    categoryId: $('#pj-cat').value || null,
+    memo: $('#pj-memo').value
+  });
+  function updateSimilarGoals() {
+    const box = $('#pj-similar');
+    const candidates = window.PlannerGoals.similarGoals(goalDraft(), data.projects);
+    box.replaceChildren();
+    box.hidden = !candidates.length;
+    if (!candidates.length) return;
+    box.append(
+      h('b', { text: '비슷한 목표가 있어요' }),
+      h('p', {
+        text:
+          candidates.map((p) => '‘' + p.title + '’').join(', ') +
+          ' 목표와 이름·기간이 비슷합니다. 별도 목표로 저장해도 괜찮아요.'
+      })
+    );
+    if ($('#pj-mode').value !== 'project')
+      box.append(
+        h('p', {
+          class: 'note',
+          text: '같은 활동이면 아래 실천 기록 항목에서 직접 연결할 수 있어요. 자동으로 연결하거나 합치지 않습니다.'
+        })
+      );
+    for (const candidate of candidates)
+      box.append(
+        h(
+          'details',
+          {},
+          h('summary', { text: candidate.title + ' · 기존 목표 보기' }),
+          h('p', {
+            text:
+              (candidate.mode === 'daily'
+                ? '날짜별 실천'
+                : candidate.mode === 'count'
+                  ? `${candidate.period === 'month' ? '매월' : '매주'} ${candidate.target}회`
+                  : '일회성 목표') +
+              ' · ' +
+              (candidate.startDate || '시작일 없음') +
+              ' ~ ' +
+              (candidate.due || '종료 없음')
+          }),
+          h('p', { text: candidate.memo || '메모 없음' })
+        )
+      );
+  }
+  function syncGoalForm() {
+    const mode = $('#pj-mode').value;
+    $('#pj-daily').hidden = mode !== 'daily';
+    $('#pj-count').hidden = mode !== 'count';
+    $('#pj-share-row').hidden = mode === 'project';
+    $('#pj-share-note').hidden = mode === 'project';
+    $('#pj-policy-note').hidden = !window.PlannerGoals.isRepeating(editingProj);
+    if (mode !== 'project' && !$('#pj-start').value) $('#pj-start').value = fmtDate(new Date());
+    updateSimilarGoals();
+  }
+  function openProjectDialog(p = null) {
     editingProj = p;
-    $('#pj-title').value = p.title;
-    $('#pj-due').value = p.due || '';
+    const policy =
+      p && window.PlannerGoals.isRepeating(p)
+        ? window.PlannerGoals.policyAt(p, fmtDate(addDays(new Date(), 1)))
+        : p;
+    $('#projDialogTitle').textContent = p ? '목표 편집' : '새 목표';
+    $('#pj-title').value = p?.title || '';
+    $('#pj-start').value = policy?.startDate || '';
+    $('#pj-due').value = policy?.due || '';
+    $('#pj-mode').value = policy?.mode || 'project';
+    $('#pj-period').value = policy?.period || 'week';
+    $('#pj-target').value = String(policy?.target || 3);
+    for (const input of $('#pj-weekdays').querySelectorAll('input'))
+      input.checked = (policy?.weekdays || [0, 1, 2, 3, 4, 5, 6]).includes(Number(input.value));
+    $('#pj-mode').disabled = !!p; // A different kind is a new goal; existing history keeps its meaning.
     fillSelect($('#pj-cat'), catOptions('미분류'));
-    $('#pj-cat').value = catById(p.categoryId) ? p.categoryId : '';
-    $('#pj-status').value = p.status === 'done' ? 'done' : 'active';
-    $('#pj-memo').value = p.memo || '';
-    const st = projectStats(p);
-    $('#pj-note').textContent = st.total
-      ? `연결된 할 일 ${st.total}개 중 ${st.done}개 완료. 삭제해도 할 일은 남고 목표 연결만 해제돼요.`
-      : '연결된 할 일이 아직 없어요. 삭제해도 할 일은 지워지지 않아요.';
+    $('#pj-cat').value = p ? (catById(p.categoryId) ? p.categoryId : '') : defaultCatForNew();
+    $('#pj-status').value = p?.status === 'done' ? 'done' : 'active';
+    $('#pj-memo').value = p?.memo || '';
+    const groups = new Map();
+    for (const other of data.projects.filter(window.PlannerGoals.isRepeating)) {
+      const atDate = fmtDate(addDays(new Date(), p ? 1 : 0));
+      const group = window.PlannerGoals.policyAt(other, atDate)?.activityId || other.id;
+      if (other.id !== p?.id) groups.set(group, other.title);
+    }
+    if (policy?.activityId && policy.activityId !== p?.id && !groups.has(policy.activityId))
+      groups.set(policy.activityId, '기존 공유 활동');
+    fillSelect($('#pj-share'), [
+      { value: '', label: '이 목표만 따로 기록' },
+      ...[...groups].map(([value, label]) => ({ value, label: '같은 활동: ' + label }))
+    ]);
+    $('#pj-share').value = policy?.activityId && policy.activityId !== p?.id ? policy.activityId : '';
+    $('#pj-delete').hidden = !p;
+    const st = p ? projectStats(p) : { total: 0 };
+    $('#pj-note').textContent =
+      p && !window.PlannerGoals.isRepeating(p)
+        ? st.total
+          ? `기존 연결 할 일 ${st.total}개는 그대로 유지합니다. 목표를 삭제해도 할 일은 남아요.`
+          : '완료 기준을 메모에 적고, 달성하면 상태를 완료로 바꾸세요.'
+        : '날짜별 실천은 하루 한 번, 횟수 달성은 기록한 건수로 계산해요. 삭제해도 실천 기록은 보존됩니다.';
     showError('#pj-error', '');
+    syncGoalForm();
     pjDlg.showModal();
     $('#pj-title').focus();
   }
-
   function saveProject() {
-    const title = $('#pj-title').value.trim();
-    if (!title) return showError('#pj-error', '이름을 입력해 주세요.');
-    Object.assign(editingProj, {
-      title,
-      due: $('#pj-due').value || null,
-      categoryId: $('#pj-cat').value || null,
-      memo: $('#pj-memo').value,
-    });
-    const nextStatus = $('#pj-status').value;
-    if ((editingProj.status === 'done') !== (nextStatus === 'done')) setProjectStatus(editingProj, nextStatus);
+    let draft = goalDraft();
+    if (!draft.title) {
+      $('#pj-title').focus();
+      return showError('#pj-error', '이름을 입력해 주세요.');
+    }
+    if (draft.startDate && draft.due && draft.due < draft.startDate)
+      return showError('#pj-error', '종료일은 시작일보다 빠를 수 없어요.');
+    const error = window.PlannerGoals.validate(draft);
+    if (error) return showError('#pj-error', error);
+    const id = editingProj?.id || uid();
+    draft.id = id;
+    draft.activityId = $('#pj-share').value || id;
+    draft.status = $('#pj-status').value;
+    if (editingProj && !Object.hasOwn(editingProj, 'mode')) delete draft.mode;
+    if (!editingProj) draft.createdAt = Date.now();
+    if (editingProj && window.PlannerGoals.isRepeating(editingProj)) {
+      try {
+        draft = window.PlannerGoals.revise(editingProj, draft, fmtDate(addDays(new Date(), 1)));
+      } catch (error) {
+        return showError('#pj-error', error.message);
+      }
+    }
+    if (editingProj) {
+      const index = data.projects.findIndex((p) => p.id === id);
+      data.projects[index] = { ...editingProj, ...draft };
+    } else {
+      data.projects.push(draft);
+      state.projQ = '';
+      state.projFilter = 'all';
+      state.hidden.delete(catKey(draft.categoryId));
+      data.settings.hiddenCategories = [...state.hidden];
+    }
+    const saved = data.projects.find((p) => p.id === id);
+    if ((editingProj?.status === 'done') !== (saved.status === 'done'))
+      setProjectStatus(saved, saved.status);
     save();
     pjDlg.close();
     render();
@@ -2109,10 +2566,12 @@
     });
 
     // 검색 / 필터 해제
-    $('#searchBox').addEventListener('input', (e) => { state.q = e.target.value; render(); });
+    $('#searchBox').addEventListener('input', (e) => setSearch(e.target.value));
+    $('#todoNew').addEventListener('input', (e) => { state.todoQ = e.target.value; render(); });
+    $('#projNew').addEventListener('input', (e) => { state.projQ = e.target.value; render(); });
     $('#fclear').addEventListener('click', () => {
       state.hidden = new Set();
-      state.q = '';
+      state.q = ''; state.todoQ = ''; state.projQ = '';
       $('#searchBox').value = '';
       persistFilter();
       render();
@@ -2189,67 +2648,13 @@
     $('#pj-cancel').addEventListener('click', () => pjDlg.close());
     $('#pj-delete').addEventListener('click', deleteProject);
 
-    // 할 일 빠른 추가
-    for (const [inputId, errorId] of [['todoNew', 'todoAddError'], ['projNew', 'projAddError']]) {
-      $('#' + inputId).addEventListener('input', () => {
-        $('#' + inputId).removeAttribute('aria-invalid');
-        $('#' + errorId).hidden = true;
-      });
-    }
-    function addTitle(inputId, errorId) {
-      const input = $('#' + inputId);
-      const title = input.value.trim();
-      $('#' + errorId).hidden = !!title;
-      if (!title) {
-        input.setAttribute('aria-invalid', 'true');
-        input.focus();
-      } else input.removeAttribute('aria-invalid');
-      return title;
-    }
-    $('#todoAdd').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = $('#todoNew');
-      const title = addTitle('todoNew', 'todoAddError');
-      if (!title) return;
-      data.todos.push({
-        id: uid(),
-        title,
-        done: false,
-        due: $('#todoNewDue').value || null,
-        priority: Number($('#todoNewPrio').value),
-        memo: '',
-        categoryId: $('#todoNewCat').value || null,
-        projectId: $('#todoNewProj').value || null,
-        createdAt: Date.now(),
-      });
-      input.value = '';
-      $('#todoNewDue').value = '';
-      save();
-      render();
-      input.focus();
-    });
-
-    // 목표 빠른 추가
-    $('#projAdd').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = $('#projNew');
-      const title = addTitle('projNew', 'projAddError');
-      if (!title) return;
-      data.projects.push({
-        id: uid(),
-        title,
-        due: $('#projNewDue').value || null,
-        categoryId: $('#projNewCat').value || null,
-        status: 'active',
-        memo: '',
-        createdAt: Date.now(),
-      });
-      input.value = '';
-      $('#projNewDue').value = '';
-      save();
-      render();
-      input.focus();
-    });
+    $('#todo-create').addEventListener('click', () => openTodoDialog());
+    $('#goal-create').addEventListener('click', () => openProjectDialog());
+    $('#set-theme').addEventListener('change', e => { data.settings.theme = window.PlannerTheme.apply(e.target.value); save(); });
+    $('#ev-point').addEventListener('change', syncEventForm);
+    for (const range of ['week', 'month']) $('#goal-range-' + range).addEventListener('click', () => { state.goalRange = range; renderProjects(); });
+    for (const id of ['pj-mode', 'pj-share']) $('#' + id).addEventListener('change', syncGoalForm);
+    for (const id of ['pj-title', 'pj-start', 'pj-due']) $('#' + id).addEventListener('input', updateSimilarGoals);
 
     // 단축키: ← → 이동, t 오늘, m/w/d 보기, n 새 일정, / 검색
     document.addEventListener('keydown', (e) => {
@@ -2273,7 +2678,7 @@
         } : {}),
         n: () => openEventDialog(null, {}),
         q: openQuickDialog,
-        '/': () => $('#searchBox').focus(),
+        '/': () => $(state.page === 'todos' ? '#todoNew' : state.page === 'goals' ? '#projNew' : '#searchBox').focus(),
       };
       if (keys[e.key]) {
         e.preventDefault();
@@ -2281,8 +2686,18 @@
       }
     });
 
-    // 1분마다 새로 그려 현재 시각 선/오늘 표시/남은 일정을 갱신
+    let shownDay=fmtDate(new Date());
+    function refreshDay() {
+      const day=fmtDate(new Date());
+      if (day===shownDay || document.querySelector('dialog[open]')) return false;
+      shownDay=day;render();return true;
+    }
+    window.addEventListener('focus',refreshDay);
+    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshDay();});
+    document.querySelectorAll('dialog').forEach(dialog=>dialog.addEventListener('close',refreshDay));
+    // Date rollover also refreshes recurring-goal policies after tray/sleep.
     setInterval(() => {
+      if (refreshDay()) return;
       if (state.page === 'calendar') renderCalendar();
       else if (state.page === 'home' && !document.querySelector('dialog[open]') && !(document.activeElement && document.activeElement.id === 'homeQuick' && document.activeElement.value)) renderHome();
     }, 60 * 1000);
@@ -2313,7 +2728,7 @@
         title: typeof e.title === 'string' ? e.title : '',
         memo: typeof e.memo === 'string' ? e.memo : '',
         allDay: !!e.allDay && e.start.length === 10,
-        end: okDateTime(e.end) && e.end.length === e.start.length ? e.end : e.start,
+        end: e.timeType === 'point' && e.start.length > 10 ? e.start : okDateTime(e.end) && e.end.length === e.start.length ? e.end : e.start,
         categoryId: strOrNull(e.categoryId),
         repeat: ['none', 'daily', 'weekly', 'monthly', 'yearly'].includes(e.repeat) ? e.repeat : 'none',
         repeatInterval: Math.max(1, parseInt(e.repeatInterval, 10) || 1),
@@ -2348,7 +2763,8 @@
 
   // 저장된(또는 가져온) 내용을 앱 데이터로 정리해서 적용합니다. 빠진 항목은 기본값으로 채워요.
   function applyLoaded(loaded) {
-    const clean = sanitizeData(isObj(loaded) ? loaded : {});
+    loaded = isObj(loaded) ? loaded : {};
+    const clean = sanitizeData(loaded);
     state.lastDropped = clean.dropped;
     const cats = clean.categories || DEFAULT_CATS();
     data = {
@@ -2356,11 +2772,14 @@
       todos: clean.todos,
       projects: clean.projects,
       categories: cats,
+      goalRecords: window.PlannerGoals.normalizeRecords(loaded.goalRecords),
+      goalDays: window.PlannerGoals.normalizeDays(loaded.goalDays),
       settings: isObj(loaded && loaded.settings) ? { ...loaded.settings } : {},
     };
     // 일정 완료 체크는 처음 켠 날부터 셉니다. (그 전의 지난 일정이 한꺼번에 밀린 일로 뜨지 않도록)
     if (!okDate(data.settings.taskTrackingSince)) data.settings.taskTrackingSince = fmtDate(new Date());
     data.settings.weekStart = weekStart();
+    data.settings.theme = window.PlannerTheme.apply(data.settings.theme);
     const valid = new Set([NONE, ...cats.map((c) => c.id)]);
     state.hidden = new Set((Array.isArray(data.settings.hiddenCategories) ? data.settings.hiddenCategories : []).filter((k) => valid.has(k)));
     data.settings.hiddenCategories = [...state.hidden];
@@ -2368,14 +2787,14 @@
   }
 
   // ---------- 설정 / 백업 ----------
-  const EXPORT_KEYS = ['events', 'todos', 'projects', 'categories', 'settings'];
+  const EXPORT_KEYS = ['events', 'todos', 'projects', 'categories', 'settings', 'goalRecords', 'goalDays'];
   const exportJson = () => JSON.stringify({
     app: '내 플래너',
     exportedAt: new Date().toISOString(),
     ...Object.fromEntries(EXPORT_KEYS.map((k) => [k, data[k]])),
   }, null, 2);
   const summaryOf = (d) =>
-    `일정 ${(d.events || []).length}개 · 할 일 ${(d.todos || []).length}개 · 목표 ${(d.projects || []).length}개 · 카테고리 ${(d.categories || []).length}개`;
+    `일정 ${(d.events || []).length}개 · 할 일 ${(d.todos || []).length}개 · 목표 ${(d.projects || []).length}개 · 카테고리 ${(d.categories || []).length}개 · 실천 ${(d.goalRecords || []).length}건`;
 
   // 붙여넣은 글이 내 플래너 백업인지 확인합니다. 맞으면 { obj }, 아니면 { error }.
   function parseBackup(text) {
@@ -2384,6 +2803,10 @@
     if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !['events', 'todos', 'projects'].some((k) => Array.isArray(obj[k]))) {
       return { error: '내 플래너 백업 파일이 아니에요.' };
     }
+    for (const key of ['goalRecords','goalDays']) {
+      if (obj[key] !== undefined && !Array.isArray(obj[key])) return {error:'실천 기록 형식이 올바르지 않아 가져오지 않았어요.'};
+    }
+    if ((obj.goalRecords && window.PlannerGoals.normalizeRecords(obj.goalRecords).length !== obj.goalRecords.length) || (obj.goalDays && window.PlannerGoals.normalizeDays(obj.goalDays).length !== obj.goalDays.length)) return {error:'날짜나 ID가 올바르지 않거나 중복된 실천 기록이 있어요. 기존 데이터를 유지합니다.'};
     return { obj };
   }
 
@@ -2455,6 +2878,7 @@
   }
 
   function renderSettings() {
+    $('#set-theme').value = window.PlannerTheme.getMode();
     $('#set-category-list').replaceChildren(...data.categories.map((c) =>
       h('div', { class: 'category-manage-row' },
         h('span', { text: catName(c) }),

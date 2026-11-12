@@ -41,6 +41,15 @@ let app,page,held;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,label,timeout=120000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await delay(500);}throw Error(label);}
 const record=s=>{report.passed.push(s);console.log('PASS',s)};
+async function addTodo(title){
+ await page.locator('[data-nav="todos"]').click();
+ await page.locator('#todoNew').fill('');
+ await page.locator('#todo-create').click();
+ await page.locator('#todoDialog').waitFor({state:'visible'});
+ await page.locator('#td-title').fill(title);
+ await page.locator('#todoForm button[type=submit]').click();
+ await page.locator('#todoDialog').waitFor({state:'hidden'});
+}
 function processes(){
  const script="[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; @(Get-Process -Name MyPlanner -ErrorAction SilentlyContinue | Select-Object Id,Path,MainWindowTitle) | ConvertTo-Json -Compress";
  const text=execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8'}).trim();
@@ -56,7 +65,7 @@ function processes(){
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),userData);
  assert.equal(await app.evaluate(({app})=>app.getVersion()),baseVersion);
  assert.equal((await page.evaluate(()=>window.storage.load())).todos.length,0);
- await page.locator('[data-nav="todos"]').click();await page.locator('#todoNew').fill('E2E saved task');await page.locator('#todoAdd button[type=submit]').click();
+ await addTodo('E2E saved task');
  const dataFile=path.join(userData,'planner-data.json');
  await until(()=>fs.existsSync(dataFile)&&JSON.parse(fs.readFileSync(dataFile)).todos.some(t=>t.title==='E2E saved task'),'Initial task not persisted');
  await page.locator('[data-nav="settings"]').click();
@@ -67,7 +76,7 @@ function processes(){
  const ready=await page.evaluate(()=>window.plannerApp.updates.getState());assert.equal(ready.version,nextVersion);record('Real installed app downloaded next NSIS version with generated metadata');
  // Save a pending edit into a blocked target; installing must not close the app.
  held=dataFile+'.held';fs.renameSync(dataFile,held);fs.mkdirSync(dataFile);
- await page.locator('[data-nav="todos"]').click();await page.locator('#todoNew').fill('E2E pending task');await page.locator('#todoAdd button[type=submit]').click();
+ await addTodo('E2E pending task');
  await page.locator('#saveStatus[data-state="error"]').waitFor({state:'visible'});
  await page.locator('[data-nav="settings"]').click();await page.locator('#update-install').click();
  await page.waitForFunction(()=>document.querySelector('#update-status').textContent.includes('저장 완료를 확인하지 못해'));
