@@ -57,7 +57,14 @@ async function addPracticeGoal(title, missed=false){
  await page.locator('#pj-mode').selectOption('daily');
  await page.locator('#projForm button[type=submit]').click();
  await page.locator('#projDialog').waitFor({state:'hidden'});
+ // Closing the editor updates the UI before the debounced native write ends.
+ // Verify actual persistence instead of treating a closed dialog as a saved file.
+ await until(async()=>{
+  const saved=await page.evaluate(()=>window.storage.load());
+  return saved.projects.some(p=>p.title===title);
+ },'Recurring goal was not persisted before update: '+title,15000);
  const goal=await page.evaluate(async title=>(await window.storage.load()).projects.find(p=>p.title===title),title);
+ assert(goal?.id,'Saved recurring goal must have an ID: '+title);
  await page.locator(`[data-${missed?'missed':'record'}="${goal.id}"]`).click();
  return goal;
 }
