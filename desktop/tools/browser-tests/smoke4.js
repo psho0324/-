@@ -1,11 +1,12 @@
 // 설치 앱처럼 window.storage(느린 디스크)를 흉내 내서, 종료 직전 "저장 끝날 때까지 기다리기"가 맞는지 점검
 const { chromium } = require('playwright');
+const URL = process.env.PLANNER_PREVIEW_URL || 'file://' + __dirname + '/preview/index.html';
 const S = require('path').join(__dirname, 'out'); // 스크린샷이 저장되는 폴더
 require('fs').mkdirSync(S, { recursive: true });
 const results = [];
 const check = (name, ok, extra) => { results.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? '  -> ' + extra : '')); };
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
   await ctx.addInitScript(() => {
     window.__disk = null; window.__saves = 0; window.__delay = 600; window.__fail = false; window.__flushCb = null;
@@ -22,7 +23,7 @@ const check = (name, ok, extra) => { results.push({ name, ok }); console.log((ok
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('file://' + __dirname + '/preview/index.html');
+  await page.goto(URL);
   await page.waitForSelector('.home');
   await page.waitForTimeout(600);
   const add = async (t) => { await page.fill('.home-add input', t); await page.press('.home-add input', 'Enter'); };

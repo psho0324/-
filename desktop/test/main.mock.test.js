@@ -145,9 +145,9 @@ const sample = (n) => ({ events: Array.from({ length: n }, (_, i) => ({ id: 'e' 
     const k = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     const d = sample(0);
     d.events.push({ id: 'r1', title: '곧 시작', allDay: false, start: k(now), end: k(new Date(now.getTime() + 3600e3)), repeat: 'none', repeatInterval: 1, repeatUntil: null, exceptions: [], reminder: 10 });
+    const before = log.notifications.length;
     await handlers['data:save'](null, d);
     const checker = log.timers.find((t) => t.ms === 30000).fn;
-    const before = log.notifications.length;
     checker();
     assert.strictEqual(log.notifications.length, before + 1);
     assert.strictEqual(log.notifications.at(-1).o.title, '곧 시작');

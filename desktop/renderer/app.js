@@ -41,6 +41,25 @@
     expanded: new Set(), // 할 일을 모두 펼친 목표 id
   };
 
+  // A draft belongs to the local/account profile in which it was opened.
+  // Keep its text available for copying, but never save it into a new profile.
+  let profileGeneration = 0;
+  const draftProfiles = new WeakMap();
+  const markDraftProfile = dialog => draftProfiles.set(dialog, profileGeneration);
+  for (const [id, errorId] of [['eventDialog', '#ev-error'], ['todoDialog', '#td-error'], ['projDialog', '#pj-error'], ['quickDialog', '#quickPreview'], ['catDialog', '#cat-note']]) {
+    const dialog = document.getElementById(id);
+    const guard = event => {
+      if (draftProfiles.get(dialog) === profileGeneration) return;
+      if (event.type === 'click' && (!event.target.closest('button') || event.target.closest('#ev-cancel, #td-cancel, #pj-cancel, #quickCancel, #cat-cancel'))) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      showError(errorId, '계정 자료가 전환됐어요. 입력한 내용은 보존했어요. 필요한 내용을 복사하고 창을 닫은 뒤 다시 작성해 주세요.');
+      if (id === 'catDialog') $('#cat-cancel').hidden = false;
+    };
+    dialog.addEventListener('submit', guard, true);
+    dialog.addEventListener('click', guard, true);
+    if (id === 'catDialog') for (const type of ['input', 'change']) dialog.addEventListener(type, guard, true);
+  }
+
   // ---------- 유틸 ----------
   const pad2 = (n) => String(n).padStart(2, '0');
   const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -1698,6 +1717,7 @@
     state.quickKind = 'auto';
     $('#quickInput').value = '';
     renderQuickPreview();
+    markDraftProfile(quickDlg);
     quickDlg.showModal();
     $('#quickInput').focus();
   }
@@ -2013,8 +2033,24 @@
     el.hidden = !msg;
   }
 
+  // 원격 반영 뒤에도 열린 초안은 보존하지만, 오래된 폼이 최신 항목을 덮어쓰지 않게 합니다.
+  const draftSnapshot = item => item ? JSON.parse(JSON.stringify(item)) : null;
+  const draftCanonical = value => Array.isArray(value) ? value.map(draftCanonical)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, draftCanonical(value[key])])) : value;
+  function freshDraftItem(kind, original, baseline, errorId) {
+    if (!original) return null;
+    const latest = data[kind].find(item => item.id === original.id);
+    if (!latest || JSON.stringify(draftCanonical(latest)) !== JSON.stringify(draftCanonical(baseline))) {
+      showError(errorId, '편집 중 이 항목이 다른 곳에서 변경되거나 삭제됐어요. 입력한 내용은 그대로 두었어요. 필요한 내용을 복사한 뒤 창을 닫고 최신 항목을 확인해 주세요.');
+      return false;
+    }
+    return latest;
+  }
+  let eventDraftBase = null;
+
   function openEventDialog(ev, opts = {}) {
     editing = { ev, occDate: opts.occDate || null };
+    eventDraftBase = draftSnapshot(ev);
     let sd, st, ed, et, allDay;
     if (ev) {
       allDay = !!ev.allDay;
@@ -2066,11 +2102,17 @@
     $('#ev-delete-all').textContent = repeating ? '전체 삭제' : '삭제';
     showError('#ev-error', '');
 
+    markDraftProfile(evDlg);
     evDlg.showModal();
     $('#ev-title').focus();
   }
 
   function saveEvent() {
+    if (editing.ev) {
+      const latest = freshDraftItem('events', editing.ev, eventDraftBase, '#ev-error');
+      if (!latest) return;
+      editing.ev = latest;
+    }
     const allDay = $('#ev-allday').checked;
     const sd = $('#ev-start-date').value;
     // 반복 일정은 하루짜리 일정으로 저장 (끝나는 날짜는 "반복 종료일"이 정함)
@@ -2152,7 +2194,7 @@
   }
 
   function deleteEvent(onlyThisOccurrence) {
-    const ev = editing.ev;
+    const ev = freshDraftItem('events', editing.ev, eventDraftBase, '#ev-error');
     if (!ev) return;
     const snap = takeSnapshot();
     const title = ev.title || '일정';
@@ -2170,9 +2212,11 @@
   // ---------- 할 일 대화상자 ----------
   const tdDlg = $('#todoDialog');
   let editingTodo = null;
+  let todoDraftBase = null;
 
   function openTodoDialog(t = null) {
     editingTodo = t;
+    todoDraftBase = draftSnapshot(t);
     $('#todoDialogTitle').textContent = t ? '할 일 편집' : '새 할 일';
     $('#td-title').value = t?.title || '';
     $('#td-due').value = t?.due || '';
@@ -2187,11 +2231,17 @@
       ? `기존 목표 연결: ${projById(t.projectId)?.title || '이전 목표'} (기록을 유지합니다)`
       : '';
     showError('#td-error', '');
+    markDraftProfile(tdDlg);
     tdDlg.showModal();
     $('#td-title').focus();
   }
 
   function saveTodo() {
+    if (editingTodo) {
+      const latest = freshDraftItem('todos', editingTodo, todoDraftBase, '#td-error');
+      if (!latest) return;
+      editingTodo = latest;
+    }
     const title = $('#td-title').value.trim();
     if (!title) {
       $('#td-title').focus();
@@ -2221,6 +2271,7 @@
   // ---------- 목표 작성 / 편집 ----------
   const pjDlg = $('#projDialog');
   let editingProj = null;
+  let projectDraftBase = null;
   const goalDraft = () => ({
     ...(editingProj || {}),
     id: editingProj?.id || 'new-goal',
@@ -2292,6 +2343,7 @@
   }
   function openProjectDialog(p = null) {
     editingProj = p;
+    projectDraftBase = draftSnapshot(p);
     const policy =
       p && window.PlannerGoals.isRepeating(p)
         ? window.PlannerGoals.policyAt(p, fmtDate(addDays(new Date(), 1)))
@@ -2333,10 +2385,16 @@
         : '날짜별 실천은 하루 한 번, 횟수 달성은 기록한 건수로 계산해요. 삭제해도 실천 기록은 보존됩니다.';
     showError('#pj-error', '');
     syncGoalForm();
+    markDraftProfile(pjDlg);
     pjDlg.showModal();
     $('#pj-title').focus();
   }
   function saveProject() {
+    if (editingProj) {
+      const latest = freshDraftItem('projects', editingProj, projectDraftBase, '#pj-error');
+      if (!latest) return;
+      editingProj = latest;
+    }
     let draft = goalDraft();
     if (!draft.title) {
       $('#pj-title').focus();
@@ -2378,6 +2436,9 @@
   }
 
   function deleteProject() {
+    const latest = freshDraftItem('projects', editingProj, projectDraftBase, '#pj-error');
+    if (!latest) return;
+    editingProj = latest;
     const id = editingProj.id;
     const snap = takeSnapshot();
     const title = editingProj.title || '목표';
@@ -2428,6 +2489,7 @@
       ? '추가를 눌러야 저장돼요. 취소하거나 Esc로 닫으면 카테고리가 생기지 않아요.'
       : '이름과 색은 바로 적용돼요. 삭제하면 이 카테고리의 일정·할 일·목표는 미분류로 바뀌고, 일정은 기존 색을 그대로 유지해요.';
     paintCatSwatches();
+    markDraftProfile(catDlg);
     catDlg.showModal();
     $('#cat-name').focus();
     $('#cat-name').select();
@@ -2529,7 +2591,7 @@
       renderBackupList(await N().backupNow());
       $('#set-backupMsg').textContent = '지금 상태를 백업했어요.';
       $('#set-backupMsg').className = 'set-msg ok';
-    }, '백업하지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    }, '백업하지 못했어요. 저장 실패 표시가 있으면 ‘다시 시도’를 누르고 폴더 쓰기 권한을 확인해 주세요. 변경 내용을 보관하려면 아래 데이터 백업에서 내보내세요.'));
     const folderResult = (r, okText) => {
       const msg = $('#set-folderMsg');
       if (!r || r.canceled || r.same) { msg.textContent = ''; return; }
@@ -2538,8 +2600,8 @@
       msg.textContent = okText;
       msg.className = 'set-msg ok';
     };
-    $('#set-folder').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'), '저장 위치를 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
-    $('#set-folderReset').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().resetFolder(), '기본 위치로 되돌렸어요.'), '기본 위치로 바꾸지 못했어요. 저장 상태와 폴더 권한을 확인한 뒤 다시 시도해 주세요.'));
+    $('#set-folder').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().chooseFolder(), '저장 위치를 바꿨어요. 이 PC의 예전 데이터는 자동 백업에 남아 있어요.'), '저장 위치를 바꾸지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 폴더 쓰기 권한을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.'));
+    $('#set-folderReset').addEventListener('click', (e) => nativeAction(e.currentTarget, '#set-folderMsg', async () => folderResult(await N().resetFolder(), '기본 위치로 되돌렸어요.'), '기본 위치로 바꾸지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 폴더 쓰기 권한을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.'));
     // 다른 PC(동기화 폴더)에서 데이터가 바뀌면 불러옵니다.
     if (window.PlannerNative) {
       window.PlannerNative.onExternalChange((d) => {
@@ -2547,6 +2609,24 @@
         render();
         state.undoSnap = null;
         toast('다른 PC에서 바뀐 내용을 불러왔어요.');
+      });
+    }
+    // 계정 동기화는 native 저장 후 조용히 반영합니다. IPC 이후의 로컬 변경도 보존해요.
+    if (typeof window.storage?.onSyncedChange === 'function') {
+      window.storage.onSyncedChange(({ data: next, baseData, reason }) => {
+        if (!next || typeof next !== 'object') return;
+        if (reason === 'profile') profileGeneration++;
+        const merged = reason === 'profile' ? next : window.PlannerSync.mergeVisible(baseData, next, data);
+        const changedLocally = reason !== 'profile' && JSON.stringify(merged) !== JSON.stringify(next);
+        if (state.undoSnap || state.undoImport) hideToast();
+        state.undoSnap = null;
+        state.undoImport = null;
+        resetImportBtn();
+        const previousView = state.view;
+        applyLoaded(merged);
+        if (reason !== 'profile') state.view = previousView;
+        render();
+        if (changedLocally) save();
       });
     }
     $('#set-export').addEventListener('click', downloadBackup);
@@ -2634,6 +2714,9 @@
     $('#todoForm').addEventListener('submit', (e) => { e.preventDefault(); saveTodo(); });
     $('#td-cancel').addEventListener('click', () => tdDlg.close());
     $('#td-delete').addEventListener('click', () => {
+      const latest = freshDraftItem('todos', editingTodo, todoDraftBase, '#td-error');
+      if (!latest) return;
+      editingTodo = latest;
       const snap = takeSnapshot();
       const title = editingTodo.title || '할 일';
       data.todos = data.todos.filter((t) => t !== editingTodo);
@@ -2816,6 +2899,7 @@
     el.className = 'set-msg' + (kind ? ' ' + kind : '');
   };
 
+  let appBuildInfo = { accountTestBuild: false };
   async function loadAppVersion() {
     const label = $('#app-version');
     if (!window.plannerApp?.getVersion) {
@@ -2827,6 +2911,21 @@
       if (typeof version !== 'string' || !version.trim()) throw new Error('Missing app version');
       label.textContent = 'v' + version;
       document.title = '내 플래너 v' + version;
+      if (typeof window.plannerApp.getBuildInfo === 'function') {
+        try { appBuildInfo = await window.plannerApp.getBuildInfo(); }
+        catch { appBuildInfo = { accountTestBuild: false }; }
+      }
+      if (appBuildInfo?.accountTestBuild) {
+        const target = appBuildInfo.targetVersion ? appBuildInfo.targetVersion + ' 후보 · ' : '';
+        $('#app-build-note').textContent = target + '계정 연결 테스트용입니다. 기본 저장 공간을 분리하고 자동 업데이트·자동 시작을 끕니다. 위 버전은 원본 메타데이터를 표시합니다.';
+        $('#app-build-note').hidden = false;
+        $('#update-hint').textContent = '변경된 테스트 파일을 받을 때는 이 테스트 앱을 종료한 뒤 새 파일로 교체해 주세요.';
+        $('#set-autostart').disabled = true;
+        $('#set-autostart').checked = false;
+        $('#set-folder').disabled = true;
+        $('#set-folderReset').disabled = true;
+        document.title += ' — 계정 연결 테스트';
+      }
     } catch {
       label.textContent = '버전 정보를 불러오지 못했어요.';
     }
@@ -2855,7 +2954,9 @@
         preparing: '저장과 백업을 확인하고 있어요…',
         installing: '저장된 내용을 확인했어요. 업데이트를 설치하고 다시 시작합니다…',
         error: '업데이트를 확인하거나 내려받지 못했어요. 지금 버전을 계속 사용하고 나중에 다시 시도해 주세요.',
-        unsupported: next.disabledReason === 'store'
+        unsupported: next.disabledReason === 'account-test'
+          ? '계정 연결 테스트 앱은 자동 업데이트를 사용하지 않아요.'
+          : next.disabledReason === 'store'
           ? 'Microsoft Store에서 업데이트를 확인해 주세요.'
           : '설치된 Windows 앱에서 업데이트를 확인할 수 있어요.',
       };
@@ -2887,11 +2988,11 @@
     $('#set-holidays').checked = data.settings.holidays !== false;
     $('#set-notify').checked = data.settings.notifications !== false;
     $('#set-notify-note').textContent = window.storage
-      ? '일정에 설정한 알림 시간에 데스크톱 알림이 떠요.'
+      ? '인터넷 없이도 일정 알림이 떠요. 앱이나 트레이가 실행 중이어야 해요.'
       : '미리보기에서는 알림이 울리지 않아요. 설치한 앱에서 동작해요.';
     $('#set-summary').textContent = `현재 데이터: ${summaryOf(data)}`;
     $('#set-where').textContent = window.storage
-      ? '저장 위치: 이 PC의 앱 데이터 폴더(planner-data.json). 앱을 다시 설치해도 그대로예요.'
+      ? appBuildInfo?.accountTestBuild ? '저장 위치: 계정 연결 테스트 전용 폴더. 기본 저장 공간은 일반 앱과 분리돼요.' : '저장 위치: 이 PC의 앱 데이터 폴더(planner-data.json). 앱을 다시 설치해도 그대로예요.'
       : '저장 위치: 이 브라우저 안(미리보기용). 실제 앱의 데이터와는 따로예요.';
     $('#set-undo').hidden = !state.undoImport;
 
@@ -2901,6 +3002,10 @@
     $('#set-autostart').checked = data.settings.autoStart === true;
     for (const id of ['#set-keep', '#set-autostart', '#set-folder', '#set-folderOpen', '#set-folderReset', '#set-backupNow', '#set-backupOpen']) {
       $(id).disabled = !native;
+    }
+    if (appBuildInfo?.accountTestBuild) {
+      $('#set-autostart').disabled = true; $('#set-autostart').checked = false;
+      $('#set-folder').disabled = true; $('#set-folderReset').disabled = true;
     }
     $('#set-sysNote').hidden = !!native;
     if (native) refreshNative();
@@ -2959,7 +3064,7 @@
           $('#set-backupMsg').textContent = `${fmtBackupLabel(b)} 백업으로 복원했어요.`;
           $('#set-backupMsg').className = 'set-msg ok';
         } catch {
-          $('#set-backupMsg').textContent = '백업을 복원하지 못했어요. 저장 상태와 백업 파일을 확인한 뒤 다시 시도해 주세요.';
+          $('#set-backupMsg').textContent = '백업을 복원하지 못했어요. 최근 변경을 보호하려면 먼저 저장을 완료해야 해요. 저장 실패 표시의 ‘다시 시도’와 백업 파일을 확인하고, 필요하면 아래 데이터 백업에서 내보내세요.';
           $('#set-backupMsg').className = 'set-msg err';
         } finally { btn.disabled = false; }
       });

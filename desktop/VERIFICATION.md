@@ -99,6 +99,6 @@ Error invoking remote method 'data:save': Error: EPERM: operation not permitted,
 | `test-results/*/failure.png`, `test-results/*/stderr.log`                       | 실패 시 가능한 화면 캡처와 stderr 원문 |
 | `dist/MyPlanner-Setup.exe`, `dist/SHA256SUMS.txt`                               | 빌드 결과와 설치 파일 체크섬           |
 
-태그 Release는 Windows 검사·NSIS 빌드·설치 후 검사가 끝까지 성공한 경우에만 공개합니다. 사용자 PC의 수동 항목에서 문제가 생기면 앱·Windows 버전, 실행 순서, 정확한 오류 문구와 화면을 추가로 기록합니다.
+모든 배포는 사용자가 확인하고 승인한 뒤에만 진행한다. 검사 결과와 변경 내용을 먼저 보고하고 사용자가 “배포해”라고 명시하기 전에는 main 병합·버전 올리기·태그 푸시·Release 공개·홈페이지 다운로드 버전 변경을 하지 않습니다. 태그 Release에는 사용자 승인과 Windows 검사·NSIS 빌드·설치 후 검사 통과가 모두 필요합니다. 사용자 PC의 수동 항목에서 문제가 생기면 앱·Windows 버전, 실행 순서, 정확한 오류 문구와 화면을 추가로 기록합니다.
 
 공개 설치 파일: [MyPlanner-Setup.exe](https://github.com/psho0324/-/releases/download/v0.1.0/MyPlanner-Setup.exe). 파일 검증용 [SHA256SUMS.txt](https://github.com/psho0324/-/releases/download/v0.1.0/SHA256SUMS.txt)도 같은 Release에 제공합니다.

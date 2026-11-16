@@ -19,6 +19,8 @@ const scripts = [
   read('holidays.js'),
   read('quickadd.js'),
   read('storage.js'),
+  read('sync-core.js'),
+  read('account-ui.js'),
   fs.readFileSync(path.join(__dirname, 'preview-seed.js'), 'utf8'),
   read('app.js'),
 ];

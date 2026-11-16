@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 버전은 저장 데이터가 아니라 실행 중인 앱에서 읽습니다.
 contextBridge.exposeInMainWorld('plannerApp', {
   getVersion: () => ipcRenderer.invoke('app:version'),
+  getBuildInfo: () => ipcRenderer.invoke('app:build-info'),
   updates: {
     getState: () => ipcRenderer.invoke('updates:state'),
     check: () => ipcRenderer.invoke('updates:check'),
@@ -12,6 +13,25 @@ contextBridge.exposeInMainWorld('plannerApp', {
       ipcRenderer.on('updates:state', listener);
       return () => ipcRenderer.removeListener('updates:state', listener);
     },
+  },
+});
+
+// Credentials and network requests stay in the native main process.
+contextBridge.exposeInMainWorld('plannerAccount', {
+  getState: () => ipcRenderer.invoke('account:state'),
+  signInGoogle: () => ipcRenderer.invoke('account:google'),
+  cancelSignIn: () => ipcRenderer.invoke('account:cancel'),
+  sendEmailCode: email => ipcRenderer.invoke('account:email-send', email),
+  verifyEmailCode: value => ipcRenderer.invoke('account:email-verify', value),
+  connect: value => ipcRenderer.invoke('account:connect', value),
+  syncNow: () => ipcRenderer.invoke('account:sync'),
+  signOut: () => ipcRenderer.invoke('account:sign-out'),
+  resolveRecovery: value => ipcRenderer.invoke('account:recovery', value),
+  exportConflicts: () => ipcRenderer.invoke('account:export-conflicts'),
+  onState: cb => {
+    const listener = (_event, value) => cb(value);
+    ipcRenderer.on('account:state', listener);
+    return () => ipcRenderer.removeListener('account:state', listener);
   },
 });
 
@@ -33,6 +53,11 @@ contextBridge.exposeInMainWorld('storage', {
 
   // 다른 PC에서 데이터가 바뀌었을 때 호출됨
   onExternalChange: (cb) => ipcRenderer.on('data:external', (_e, d) => cb(d)),
+  onSyncedChange: cb => {
+    const listener = (_event, value) => cb(value);
+    ipcRenderer.on('data:sync', listener);
+    return () => ipcRenderer.removeListener('data:sync', listener);
+  },
 
   // 종료·창 닫기 직전에 main이 "저장 끝났어?"라고 물으면, cb()가 끝날 때까지 기다렸다가 true/false(저장 성공 여부)로 답해요.
   onFlushRequest: (cb) => ipcRenderer.on('app:flush-request', async (_e, id) => {

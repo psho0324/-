@@ -7,3 +7,10 @@ out/
 tools/browser-tests/preview/
 tools/browser-tests/out/
 test-results/
+backups/
+planner-data.json*
+planner-config.json*
+planner-account-session.enc*
+planner-sync-state.json*
+planner-sync-recovery-*.json*
+planner-reminder-state.json*

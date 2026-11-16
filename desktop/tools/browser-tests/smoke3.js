@@ -2,12 +2,12 @@
 const { chromium } = require('playwright');
 const S = require('path').join(__dirname, 'out'); // 스크린샷이 저장되는 폴더
 require('fs').mkdirSync(S, { recursive: true });
-const URL = 'file://' + __dirname + '/preview/index.html';
+const URL = process.env.PLANNER_PREVIEW_URL || 'file://' + __dirname + '/preview/index.html';
 const results = [];
 const check = (name, ok, extra) => { results.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? '  -> ' + extra : '')); };
 
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
   const page = await ctx.newPage();
   const errors = [];

@@ -82,6 +82,7 @@ GitHub Actions는 푸시와 PR에서 테스트·빌드를 실행합니다. Pages
 플래너 원본과 설치 설정은 `desktop/`에 있습니다. 실행·빌드 방법은 [앱 README](desktop/README.md), 실제 검사 결과와 남은 수동 항목은 [검증 기록](desktop/VERIFICATION.md)을 확인하세요.
 
 - Windows 10/11 64비트 설치 파일: https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe
-- 최신 Windows 테스트 버전: [v0.1.1](https://github.com/psho0324/-/releases/tag/v0.1.1)
-- 태그 빌드에서 원본 테스트 5개·실제 Electron·NSIS 설치 후 실행·패키지 검사를 통과한 경우에만 Release를 공개합니다.
+- 이전 Windows 테스트 버전 기록: [v0.1.1](https://github.com/psho0324/-/releases/tag/v0.1.1)
+- 모든 배포는 사용자가 확인하고 승인한 뒤에만 진행한다. 검사 결과와 변경 내용을 먼저 보여 주고 사용자가 “배포해”라고 말하기 전에는 main 병합·버전 올리기·태그 푸시·Release 공개·홈페이지 다운로드 버전 변경을 하지 않습니다.
+- Release 공개에는 사용자 승인과 태그 빌드의 원본 테스트·실제 Electron·NSIS 설치 후 실행·패키지 검사 통과가 모두 필요합니다. [배포 규칙](desktop/docs/auto-update.md#이후-버전-배포-기준)을 따릅니다.
 - 캘린더 카드의 다운로드 창은 관리자가 별도 다운로드 주소를 등록하지 않았을 때 검증된 Release 기본 주소를 사용합니다. 코드 미서명·SmartScreen 안내가 함께 표시됩니다.

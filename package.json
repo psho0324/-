@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node tests/database.test.cjs && node tests/workspace.test.cjs && node tests/browser.test.cjs && node tests/build.test.cjs",
     "build": "python3 scripts/version-assets.py && node scripts/build.cjs",
-    "start": "python3 -m http.server 3000 --bind 0.0.0.0"
+    "start": "python3 -m http.server 3000 --bind 0.0.0.0",
+    "test:planner-sync": "node supabase/tests/planner_sync.test.cjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15",

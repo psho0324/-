@@ -1,20 +1,23 @@
 {
   "name": "my-planner",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "캘린더 + 일정/할 일 관리 데스크톱 앱",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js && node test/theme.test.js && node test/goals.test.js",
+    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js && node test/theme.test.js && node test/goals.test.js && node test/release-assets.test.js && node test/sync-core.test.js && node test/sync-service.test.js && node test/account-service.test.js && node test/reminders.test.js && node test/account-ipc.test.js && node test/account-test-build.test.js",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "test:desktop": "node tools/desktop-smoke.cjs",
     "test:package": "node tools/check-package.cjs",
-    "test:renderer": "node tools/renderer-audit.cjs && node tools/v012-audit.cjs"
+    "test:renderer": "node tools/renderer-audit.cjs && node tools/v012-audit.cjs && node tools/account-ui-audit.cjs"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "electron": "45.3.0",
     "electron-builder": "26.18.0",
-    "playwright": "1.58.2"
+    "js-yaml": "4.3.2",
+    "playwright": "1.58.2",
+    "semver": "7.8.6"
   },
   "author": "떠돌이",
   "license": "UNLICENSED",
@@ -35,7 +38,11 @@
       "updater.js",
       "renderer/**",
       "assets/**",
-      "package.json"
+      "package.json",
+      "account-service.js",
+      "account-config.json",
+      "sync-service.js",
+      "reminders.js"
     ],
     "win": {
       "target": [

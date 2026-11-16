@@ -50,6 +50,17 @@ async function addTodo(title){
  await page.locator('#todoForm button[type=submit]').click();
  await page.locator('#todoDialog').waitFor({state:'hidden'});
 }
+async function addPracticeGoal(title, missed=false){
+ await page.locator('[data-nav="goals"]').click();
+ await page.locator('#goal-create').click();
+ await page.locator('#pj-title').fill(title);
+ await page.locator('#pj-mode').selectOption('daily');
+ await page.locator('#projForm button[type=submit]').click();
+ await page.locator('#projDialog').waitFor({state:'hidden'});
+ const goal=await page.evaluate(async title=>(await window.storage.load()).projects.find(p=>p.title===title),title);
+ await page.locator(`[data-${missed?'missed':'record'}="${goal.id}"]`).click();
+ return goal;
+}
 function processes(){
  const script="[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; @(Get-Process -Name MyPlanner -ErrorAction SilentlyContinue | Select-Object Id,Path,MainWindowTitle) | ConvertTo-Json -Compress";
  const text=execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8'}).trim();
@@ -60,7 +71,9 @@ function processes(){
  const config=yaml.load(originalConfig.toString());delete config.owner;delete config.repo;delete config.releaseType;config.provider='generic';config.url='http://127.0.0.1:'+server.address().port;
  // Only this temporary installation uses the test feed. Published installer unchanged.
  fs.writeFileSync(updateConfig,yaml.dump(config));
- app=await _electron.launch({executablePath:executable,args:[],timeout:30000});page=await app.firstWindow();
+ // Manual local-feed checking remains enabled; omit periodic GitHub polling in CI.
+ const updateEnv={...process.env,CI:'true',PLANNER_DISABLE_AUTO_UPDATE:'1'};
+ app=await _electron.launch({executablePath:executable,args:[],env:updateEnv,timeout:30000});page=await app.firstWindow();
  await page.waitForFunction(()=>window.storage&&document.querySelector('#homeBody')?.children.length);
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),userData);
  assert.equal(await app.evaluate(({app})=>app.getVersion()),baseVersion);
@@ -68,6 +81,13 @@ function processes(){
  await addTodo('E2E saved task');
  const dataFile=path.join(userData,'planner-data.json');
  await until(()=>fs.existsSync(dataFile)&&JSON.parse(fs.readFileSync(dataFile)).todos.some(t=>t.title==='E2E saved task'),'Initial task not persisted');
+ await addPracticeGoal('E2E shared practice');
+ await addPracticeGoal('E2E missed practice',true);
+ await page.locator('#quickOpen').click();await page.locator('#quickInput').fill('09:00 E2E point event');await page.locator('#quickOk').click();
+ await page.locator('[data-nav="settings"]').click();await page.locator('#set-theme').selectOption('dark');
+ await until(()=>{const d=JSON.parse(fs.readFileSync(dataFile));return d.goalRecords?.length===1 && d.goalDays?.length===1 && d.settings.theme==='dark' && d.events.some(e=>e.title==='E2E point event')},'New-feature fixture was not persisted before update');
+ const featureSnapshot=JSON.parse(fs.readFileSync(dataFile));
+ record('Native UI saved practice records, missed days, point event and dark theme before update');
  await page.locator('[data-nav="settings"]').click();
  // The startup timer may already have started or completed the download.
  const initial=await page.evaluate(()=>window.plannerApp.updates.getState());
@@ -89,7 +109,15 @@ function processes(){
  assert.equal(JSON.parse(asar.extractFile(path.join(path.dirname(executable),'resources/app.asar'),'package.json')).version,nextVersion);
  const persisted=JSON.parse(fs.readFileSync(dataFile));assert(persisted.todos.some(t=>t.title==='E2E saved task'));assert(persisted.todos.some(t=>t.title==='E2E pending task'));
  assert(fs.readdirSync(path.join(userData,'backups')).some(n=>n.endsWith('.json')));
- record('Actual NSIS update/relaunch reaches next version and retains both tasks plus local backups');
+ assert.deepEqual(persisted.goalRecords,featureSnapshot.goalRecords);
+ assert.deepEqual(persisted.goalDays,featureSnapshot.goalDays);
+ assert.deepEqual(persisted.projects,featureSnapshot.projects);
+ assert.deepEqual(persisted.events.find(e=>e.title==='E2E point event'),featureSnapshot.events.find(e=>e.title==='E2E point event'));
+ assert.equal(persisted.settings.theme,'dark');
+ assert(fs.readdirSync(path.join(userData,'backups')).filter(n=>n.endsWith('.json')).some(n=>{
+  const b=JSON.parse(fs.readFileSync(path.join(userData,'backups',n)));return b.goalRecords?.some(r=>r.id===featureSnapshot.goalRecords[0].id)&&b.goalDays?.length===1;
+ }),'Update backup omitted practice and missed-day history');
+ record('Actual NSIS update/relaunch retains tasks, practices, missed days, point event, theme and local backups');
 })().catch(async error=>{
  report.errors.push({message:error.message,stack:error.stack});console.error('::error title=Installed update integration::'+error.stack.replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A'));process.exitCode=1;
  if(page)try{await page.screenshot({path:path.join(out,'failure.png')})}catch{}
