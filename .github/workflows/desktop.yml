@@ -65,6 +65,9 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag must match package version v$version" }
       - name: Run original tests and updater safety tests
         run: npm test
+      - name: Diagnose Windows login return with isolated native windows
+        if: github.ref == 'refs/heads/fix/windows-google-return'
+        run: node tools/windows-google-return.cjs
       - name: Launch actual Electron and verify desktop saving
         run: npm run test:desktop
       - name: Build Windows NSIS installer
