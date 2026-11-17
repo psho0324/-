@@ -21,6 +21,30 @@ function validateConfig(value) {
   return publicKey ? { url: url.origin, publishableKey: key } : null;
 }
 
+function googleCallbackFailure(params) {
+  // Structured provider codes take precedence over free-form descriptions.
+  // Only fixed categories/messages may leave this function, never server text.
+  const classify = value => {
+    const code = (value || '').trim().toLowerCase();
+    if (['access_denied', 'user_cancelled', 'user_canceled', 'cancelled', 'canceled'].includes(code)) return 'CANCELLED';
+    if (['invalid_client', 'unexpected_failure', 'server_error', 'unauthorized_client', 'unsupported_provider'].includes(code)) return 'CONFIG';
+    return null;
+  };
+  let category = classify(params.get('error_code')) || classify(params.get('error'));
+  if (!category) {
+    const description = params.get('error_description') || '';
+    if (/\binvalid_client\b|\bunexpected_failure\b|\bclient secret is invalid\b/i.test(description)) category = 'CONFIG';
+    else if (/\baccess_denied\b|\buser[ _-]cancel(?:led|ed)\b/i.test(description)) category = 'CANCELLED';
+    else category = 'FAILED';
+  }
+  const browser = {
+    CANCELLED: 'Google 로그인을 취소했습니다. 앱으로 돌아가 다시 시도해 주세요.',
+    CONFIG: 'Google 로그인 설정을 확인해야 합니다. 앱으로 돌아가 주세요.',
+    FAILED: 'Google 로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.',
+  }[category];
+  return { code: 'ACCOUNT_GOOGLE_' + category, browser };
+}
+
 async function request(url, options) {
   try {
     const response = await fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(15000) });
@@ -45,7 +69,7 @@ async function request(url, options) {
   }
 }
 
-function createAccountService({ userDataDir, config, configFile = path.join(__dirname, 'account-config.json'), safeStorage, openExternal, transport = request, now = Date.now, callbackPort = 42883, loginTimeout = 5 * 60 * 1000 }) {
+function createAccountService({ userDataDir, config, configFile = path.join(__dirname, 'account-config.json'), safeStorage, openExternal, transport = request, now = Date.now, callbackPort = 42883, loginTimeout = 5 * 60 * 1000, onGoogleSignInSuccess = () => {} }) {
   if (!config) try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch { config = null; }
   const backend = validateConfig(config);
   const sessionFile = path.join(userDataDir, 'planner-account-session.enc');
@@ -134,19 +158,39 @@ function createAccountService({ userDataDir, config, configFile = path.join(__di
     const nonce = crypto.randomBytes(32).toString('hex');
     const active = { server: null, timer: null };
     const server = http.createServer(async (req, res) => {
-      const reply = (status, text) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'no-referrer' }); res.end(text); };
+      // Each attempt owns a new listener; pooled connections must not reach an old one.
+      const reply = (status, text) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'no-referrer', Connection: 'close' }); res.end(text); };
+      const replySuccess = () => {
+        const scriptNonce = crypto.randomBytes(16).toString('base64');
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+          'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${scriptNonce}'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+          'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff', Connection: 'close',
+        });
+        // Never interpolate provider data or credentials into this completion page.
+        // Browser policy can refuse close(); the fixed fallback must remain readable.
+        res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>로그인 완료 · 내 플래너</title></head><body><main><h1>로그인 완료</h1><p>플래너로 돌아가고 있습니다.</p><p>이 탭이 자동으로 닫히지 않으면 직접 닫아 주세요.</p></main><script nonce="${scriptNonce}">try { history.replaceState(null, '', '/auth/complete'); } catch {} try { window.close(); } catch {}</script></body></html>`);
+      };
       let u;
       try { if (req.url.length > 8192) throw Error('oversized callback'); u = new URL(req.url, 'http://127.0.0.1'); }
       catch { return reply(400, '로그인 요청을 확인하지 못했습니다.'); }
       if (req.method !== 'GET' || req.headers.host !== `127.0.0.1:${server.address()?.port}` || u.pathname !== '/auth/callback' || u.searchParams.get('state') !== nonce || pending !== active) return reply(400, '로그인 요청을 확인하지 못했습니다. 앱에서 다시 시도해 주세요.');
-      const code = u.searchParams.get('code');
-      if (!code || code.length > 2048 || u.searchParams.has('error')) { reply(400, '로그인이 완료되지 않았습니다. 앱으로 돌아가 다시 시도해 주세요.'); cancelSignIn(); return; }
       if (active.consuming) return reply(409, '로그인을 확인 중입니다. 앱으로 돌아가 주세요.');
+      const code = u.searchParams.get('code');
+      if (!code || code.length > 2048 || ['error', 'error_code', 'error_description'].some(key => u.searchParams.has(key))) {
+        const failure = googleCallbackFailure(u.searchParams);
+        error = failure.code;
+        reply(400, failure.browser);
+        cancelSignIn();
+        return;
+      }
       active.consuming = true;
       try {
         const value = await call('/auth/v1/token?grant_type=pkce', { auth_code: code, code_verifier: verifier });
         if (pending !== active || disposed) throw fail('ACCOUNT_CANCELLED', '로그인이 취소되었어요.');
-        storeSession(value); reply(200, '내 플래너에 로그인했습니다. 이 창을 닫고 앱으로 돌아가 주세요.'); error = '';
+        storeSession(value); replySuccess(); error = '';
+        // Focusing the app must never turn a completed login into an auth error.
+        try { onGoogleSignInSuccess(); } catch {}
       } catch (e) { if (pending === active) error = e.message; reply(400, '로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.'); }
       finally { if (pending === active) cancelSignIn(); }
     });

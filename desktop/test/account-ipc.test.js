@@ -19,10 +19,11 @@ function fixture(options={}){
   const paths={appData:dir,userData:dir};
   const app=new EventEmitter();Object.assign(app,{isPackaged:!!options.packaged,getVersion:()=> '0.1.2',getPath:name=>paths[name]||dir,setName:name=>calls.push(['set-name',name]),setPath:(name,value)=>{assert(fs.existsSync(value));paths[name]=value;calls.push(['set-path',name,value])},getAppPath:()=>'/synthetic-app',requestSingleInstanceLock:()=>{calls.push(['single-instance',paths.userData]);return true},setAppUserModelId:id=>calls.push(['app-id',id]),whenReady:()=>Promise.resolve(),setLoginItemSettings:value=>calls.push(['auto-start',value]),quit(){},exit:code=>calls.push(['exit',code])});
   const data={events:[],todos:[],projects:[],settings:{notifications:true}},authState={configured:false,authenticated:false,user:null,needsLogin:false,pending:false,error:''},syncState={configured:false,connected:false,pending:0,status:'unconfigured',user:null};
-  let saved=data,flushAnswer=true,custom=false,backupFails=false,syncOptions,account;
+  let saved=data,flushAnswer=true,custom=false,backupFails=false,syncOptions,accountOptions,account;
   class Window{
-    constructor(){this.destroyed=false;this.webContents={mainFrame:{},send:(channel,value)=>{calls.push(['send',channel,value]);if(channel==='app:flush-request')queueMicrotask(()=>rawListeners['app:flush-done']?.(trusted(),value,flushAnswer));},on(){},setWindowOpenHandler(){}};windows.push(this);}
-    setMenuBarVisibility(){}loadFile(){}once(){}on(){}isDestroyed(){return this.destroyed}isMinimized(){return false}show(){}hide(){}focus(){}
+    constructor(){this.destroyed=false;this.minimized=false;this.visible=false;this.focused=false;this.webContents={mainFrame:{},send:(channel,value)=>{calls.push(['send',channel,value]);if(channel==='app:flush-request')queueMicrotask(()=>rawListeners['app:flush-done']?.(trusted(),value,flushAnswer));},on(){},setWindowOpenHandler(){}};windows.push(this);}
+    setMenuBarVisibility(){}loadFile(){}once(){}on(){}isDestroyed(){return this.destroyed}isMinimized(){return this.minimized}
+    restore(){this.minimized=false;calls.push(['window-restore'])}show(){this.visible=true;calls.push(['window-show'])}hide(){this.visible=false}focus(){this.focused=true;calls.push(['window-focus'])}
   }
   const trusted=()=>({sender:windows[0].webContents,senderFrame:windows[0].webContents.mainFrame});
   const store={load:()=>({data}),save:next=>{calls.push(['save']);saved=next},backupIfNeeded(){},backupNow:()=>{calls.push(['backup']);if(backupFails)throw Error('synthetic backup failure')},listBackups:()=>[],info:()=>({custom,dataDir:dir,backupDir:path.join(dir,'backups')}),inspectDir:()=>({ok:true,hasData:false}),useDir:(...args)=>{calls.push(['useDir',...args]);custom=true;return saved},restoreBackup:()=>saved,checkExternal:()=>null};
@@ -49,6 +50,7 @@ function fixture(options={}){
       if(name==='./updater.js')return{createUpdateController:()=>updater};
       if(name==='./reminders.js')return{createReminderScheduler:()=>({tick(){calls.push(['reminder-tick'])},dispose(){}})};
       if(name==='./account-service.js')return{createAccountService:value=>{
+        accountOptions=value;
         if(options.realUnconfiguredAccount){account=createAccountService({...value,config:null,configFile:path.join(dir,'missing-config.json'),transport:async()=>{calls.push(['network']);throw Error('Unexpected synthetic transport')}});return account}
         account={getState:()=>({...authState,user:authState.user?{...authState.user}:null}),onState:cb=>{accountListeners.add(cb);return()=>accountListeners.delete(cb)},dispose(){},...Object.fromEntries(Object.keys(authMethods).map(name=>[name,(...args)=>authMethods[name](...args)]))};return account;
       }};
@@ -57,7 +59,7 @@ function fixture(options={}){
     },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../main.js'),'utf8'),sandbox);
-  const f={dir,calls,windows,rawHandlers,rawListeners,authState,syncState,authMethods,syncMethods,invoke:(name,...args)=>rawHandlers[name](trusted(),...args),trusted,getSyncOptions:()=>syncOptions,getAccount:()=>account,setCustom:value=>{custom=value},setBackupFails:value=>{backupFails=value},setFlushAnswer:value=>{flushAnswer=value},dispose:()=>{account?.dispose?.()}};fixtures.push(f);return f;
+  const f={dir,calls,windows,rawHandlers,rawListeners,authState,syncState,authMethods,syncMethods,invoke:(name,...args)=>rawHandlers[name](trusted(),...args),trusted,getSyncOptions:()=>syncOptions,getAccountOptions:()=>accountOptions,getAccount:()=>account,emitAccountState:()=>{for(const cb of accountListeners)cb({...authState})},setCustom:value=>{custom=value},setBackupFails:value=>{backupFails=value},setFlushAnswer:value=>{flushAnswer=value},dispose:()=>{account?.dispose?.()}};fixtures.push(f);return f;
 }
 let passed=0,failed=0;
 async function test(name,run){try{await run();passed++;console.log('PASS',name)}catch(error){failed++;console.error('FAIL',name,'\n',error.stack)}}
@@ -102,6 +104,27 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     await assert.rejects(f.invoke('account:google'),error=>error.message==='ACCOUNT_SETUP'&&!error.message.includes('SECRET'));
     f.authMethods.signInGoogle=async()=>{throw Error('SYNTHETIC-SERVER-SECRET')};await assert.rejects(f.invoke('account:google'),error=>error.message==='ACCOUNT_FAILED');
     f.authMethods.signInGoogle=async()=>{throw Object.assign(Error('SYNTHETIC-SERVER-SECRET'),{code:'ACCOUNT_BAD;SYNTHETIC-SECRET'})};await assert.rejects(f.invoke('account:google'),error=>error.message==='ACCOUNT_FAILED');
+  });
+  await test('Completed Google sign-in restores and focuses the existing hidden or minimized app',async()=>{
+    const f=fixture();await tick();const window=f.windows[0];
+    assert.equal(typeof f.getAccountOptions().onGoogleSignInSuccess,'function');
+    window.visible=false;window.minimized=true;const before=f.calls.length;
+    f.getAccountOptions().onGoogleSignInSuccess();
+    assert.equal(window.minimized,false);assert.equal(window.visible,true);assert.equal(window.focused,true);
+    assert.deepEqual(f.calls.slice(before).map(call=>call[0]),['window-restore','window-show','window-focus']);
+    assert.equal(f.windows.length,1);
+  });
+  await test('Ordinary account state changes and login failures never steal window focus',async()=>{
+    const f=fixture();await tick();const window=f.windows[0];window.visible=false;window.minimized=true;
+    for(const state of [
+      {pending:true,authenticated:false,error:''},
+      {pending:false,authenticated:false,error:'ACCOUNT_GOOGLE_CONFIG'},
+      {pending:false,authenticated:false,error:'ACCOUNT_GOOGLE_CANCELLED'},
+      {pending:false,authenticated:true,error:'',user:{id:A,email:'test@example.invalid'}},
+    ]){Object.assign(f.authState,state);f.emitAccountState()}
+    assert(f.calls.some(call=>call[0]==='send'&&call[1]==='account:state'));
+    assert(!f.calls.some(call=>['window-restore','window-show','window-focus'].includes(call[0])));
+    assert.equal(window.minimized,true);assert.equal(window.visible,false);assert.equal(window.focused,false);
   });
   await test('Connecting forwards only an explicit boolean import choice',async()=>{
     const f=fixture();await tick();await f.invoke('account:connect',{importLocal:'true',userId:B,access_token:'SYNTHETIC-SECRET'});await f.invoke('account:connect',{importLocal:true});

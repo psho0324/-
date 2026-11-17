@@ -373,7 +373,11 @@ function start() {
     });
 
     // The optional account layer never gates ordinary local saving or reminders.
-    account = createAccountService({ userDataDir: app.getPath('userData'), safeStorage, openExternal: url => shell.openExternal(url) });
+    account = createAccountService({
+      userDataDir: app.getPath('userData'), safeStorage,
+      openExternal: url => shell.openExternal(url),
+      onGoogleSignInSuccess: showWindow,
+    });
     sync = createSyncService({
       userDataDir: app.getPath('userData'), account,
       loadData: () => data,

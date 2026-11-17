@@ -30,15 +30,16 @@ function fakeStorage(options = {}) {
 }
 function fixture(options = {}) {
   const dir = options.dir || fs.mkdtempSync(path.join(os.tmpdir(),'planner-account-test-'));
-  const requests = [], opened = [];
+  const requests = [], opened = [], googleReturns = [];
   let clock = options.clock ?? CLOCK;
   const safeStorage = options.safeStorage || fakeStorage();
   const makeSession = (id=A,extra={}) => ({access_token:'SYNTHETIC-ACCESS-'+id,refresh_token:'SYNTHETIC-REFRESH-'+id,expires_at:Math.floor(clock/1000)+3600,user:{id,email:EMAIL},...extra});
   const service = createAccountService({
     userDataDir:dir, config: options.config === undefined ? CONFIG : options.config,
     configFile:path.join(dir,'missing-account-config.json'), safeStorage,
-    now:()=>clock, callbackPort:0, loginTimeout:options.loginTimeout ?? 10000,
+    now:()=>clock, callbackPort:options.callbackPort ?? 0, loginTimeout:options.loginTimeout ?? 10000,
     openExternal:async url=>{opened.push(url);if(options.openExternal)return options.openExternal(url)},
+    onGoogleSignInSuccess:options.onGoogleSignInSuccess || (()=>googleReturns.push(true)),
     transport:async(url,init)=>{
       const request={url,endpoint:new URL(url).pathname+new URL(url).search,headers:init.headers,body:JSON.parse(init.body)}; requests.push(request);
       if(options.onRequest){const result=await options.onRequest(request,{makeSession});if(result!==undefined)return result;}
@@ -47,7 +48,7 @@ function fixture(options = {}) {
       return {status:200,body:{}};
     },
   });
-  const value={dir,service,safeStorage,requests,opened,makeSession,setTime:value=>{clock=value},sessionFile:path.join(dir,'planner-account-session.enc')};
+  const value={dir,service,safeStorage,requests,opened,googleReturns,makeSession,setTime:value=>{clock=value},sessionFile:path.join(dir,'planner-account-session.enc')};
   fixtures.push(value); return value;
 }
 async function login(f,id=A) {
@@ -57,7 +58,7 @@ async function login(f,id=A) {
 function localRequest(url,options={}) {
   return new Promise((resolve,reject)=>{
     const parsed=new URL(url);
-    const req=http.request({hostname:parsed.hostname,port:parsed.port,method:options.method||'GET',path:options.path||parsed.pathname+parsed.search,headers:{Host:options.host||parsed.host},agent:false},res=>{
+    const req=http.request({hostname:parsed.hostname,port:parsed.port,method:options.method||'GET',path:options.path||parsed.pathname+parsed.search,headers:{Host:options.host||parsed.host},agent:options.agent ?? false},res=>{
       const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:Buffer.concat(chunks).toString()}));
     });
     req.setTimeout(1500,()=>req.destroy(Error('Synthetic loopback timeout')));req.on('error',reject);req.end();
@@ -65,6 +66,11 @@ function localRequest(url,options={}) {
 }
 function callback(f,code='synthetic-authorization-code') {
   const auth=new URL(f.opened.at(-1)); const redirect=new URL(auth.searchParams.get('redirect_to'));redirect.searchParams.set('code',code);return redirect;
+}
+function failureCallback(f,params) {
+  const url=callback(f);url.searchParams.delete('code');
+  for(const [key,value] of Object.entries(params))url.searchParams.set(key,value);
+  return url;
 }
 let passed=0,failed=0;
 async function test(name,run){try{await run();passed++;console.log('PASS',name)}catch(error){failed++;console.error('FAIL',name,'\n',error.stack)}}
@@ -201,13 +207,120 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     assert.equal(auth.origin,CONFIG.url);assert.equal(auth.pathname,'/auth/v1/authorize');assert.equal(auth.searchParams.get('provider'),'google');assert.equal(auth.searchParams.get('code_challenge_method'),'s256');
     assert.equal(redirect.hostname,'127.0.0.1');assert.match(redirect.searchParams.get('state'),/^[a-f0-9]{64}$/);assert.equal(f.service.getState().pending,true);
     const wrong=new URL(redirect);wrong.searchParams.set('state','wrong');wrong.searchParams.set('code','fake');assert.equal((await localRequest(wrong)).status,400);assert.equal(f.requests.length,0);
-    const response=await localRequest(callback(f));assert.equal(response.status,200);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['referrer-policy'],'no-referrer');assert.equal(response.headers['content-security-policy'],"default-src 'none'");assert(!response.body.includes('SYNTHETIC-ACCESS'));
+    const response=await localRequest(callback(f));assert.equal(response.status,200);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['referrer-policy'],'no-referrer');assert.match(response.headers['content-security-policy'],/^default-src 'none'; script-src 'nonce-[A-Za-z0-9+/=]+';/);assert(!response.body.includes('SYNTHETIC-ACCESS'));
     const exchange=f.requests.find(r=>r.endpoint.includes('grant_type=pkce'));assert.equal(exchange.body.auth_code,'synthetic-authorization-code');assert.equal(crypto.createHash('sha256').update(exchange.body.code_verifier).digest('base64url'),auth.searchParams.get('code_challenge'));assert.equal(f.service.getState().user.id,A);assert.equal(f.service.getState().pending,false);
+  });
+  await test('Successful Google login returns a nonce-protected completion page and signals the app once',async()=>{
+    const f=fixture();await f.service.signInGoogle();const url=callback(f,'SYNTHETIC_PRIVATE_AUTH_CODE'),response=await localRequest(url);
+    assert.equal(response.status,200);assert.match(response.headers['content-type'],/^text\/html/);assert.equal(response.headers.connection,'close');
+    assert.equal(response.headers['x-content-type-options'],'nosniff');
+    const scriptNonce=response.body.match(/<script nonce="([A-Za-z0-9+/=]+)">/)[1];
+    assert(response.headers['content-security-policy'].includes("script-src 'nonce-"+scriptNonce+"'"));
+    for(const directive of ["default-src 'none'","base-uri 'none'","form-action 'none'","frame-ancestors 'none'"])assert(response.headers['content-security-policy'].includes(directive));
+    assert(!response.headers['content-security-policy'].includes('unsafe-inline'));assert.match(response.body,/history\.replaceState/);assert.match(response.body,/window\.close\(\)/);
+    assert.match(response.body,/자동으로 닫히지 않으면/);
+    for(const value of ['SYNTHETIC_PRIVATE_AUTH_CODE','SYNTHETIC-ACCESS','SYNTHETIC-REFRESH',url.searchParams.get('state'),url.href])assert(!response.body.includes(value));
+    assert.equal(f.googleReturns.length,1);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().error,'');
+  });
+  await test('Returning the app to the foreground cannot fail an already completed Google login',async()=>{
+    const f=fixture({onGoogleSignInSuccess:()=>{assert.equal(f.service.getState().authenticated,true);throw Error('SYNTHETIC_FOCUS_FAILURE')}});
+    await f.service.signInGoogle();const response=await localRequest(callback(f));assert.equal(response.status,200);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().error,'');assert(!response.body.includes('SYNTHETIC_FOCUS_FAILURE'));
+  });
+  await test('Email login and token refresh do not signal a Google browser return',async()=>{
+    const f=fixture();await login(f);f.setTime(CLOCK+3600*1000);await f.service.rpc('planner_sync',{});assert.equal(f.googleReturns.length,0);
   });
   await test('Callback rejects incorrect method, host, path and malformed URL without token exchange',async()=>{
     const f=fixture();await f.service.signInGoogle();const url=callback(f);
     for(const options of [{method:'POST'},{host:'attacker.invalid'},{path:'/unrelated'},{path:'http://[malformed'}])assert.equal((await localRequest(url,options)).status,400);
     assert.equal(f.requests.length,0);f.service.cancelSignIn();
+  });
+  await test('Provider error parameters become fixed categories without token exchange, credentials or raw details',async()=>{
+    const raw='SYNTHETIC_PRIVATE_OAUTH_DETAIL';
+    const cases=[
+      [{error:'access_denied',error_description:raw},'CANCELLED','취소'],
+      [{error:'invalid_client',error_description:raw},'CONFIG','설정'],
+      [{error:'server_error',error_code:'unexpected_failure',error_description:raw},'CONFIG','설정'],
+      [{error_code:'invalid_client',error_description:raw},'CONFIG','설정'],
+      [{error:'unrecognized_error',error_description:'oauth2: "invalid_client" '+raw},'CONFIG','설정'],
+      [{error_description:'access_denied '+raw},'CANCELLED','취소'],
+      [{error:'unrecognized_error',error_code:'unrecognized_code',error_description:raw},'FAILED','완료하지 못'],
+      [{error_description:raw},'FAILED','완료하지 못'],
+    ];
+    for(const [params,category,text] of cases){
+      const f=fixture(),states=[];f.service.onState(value=>states.push(value));await f.service.signInGoogle();
+      const url=failureCallback(f,{...params,code:'SYNTHETIC_UNUSED_CODE',access_token:'SYNTHETIC_UNUSED_TOKEN'});
+      const response=await localRequest(url);
+      assert.equal(response.status,400);assert.match(response.body,new RegExp(text));
+      assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['referrer-policy'],'no-referrer');
+      assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+category);
+      assert.equal(f.service.getState().pending,false);assert.equal(f.service.getState().authenticated,false);
+      assert(states.some(state=>state.error==='ACCOUNT_GOOGLE_'+category&&state.pending===false));
+      assert.equal(f.requests.length,0);assert.equal(f.safeStorage.encryptions,0);assert(!fs.existsSync(f.sessionFile));
+      assert.equal(f.googleReturns.length,0);assert(!response.body.includes('<script'));
+      const publicOutput=JSON.stringify({states,body:response.body});
+      for(const secret of [raw,'SYNTHETIC_UNUSED_CODE','SYNTHETIC_UNUSED_TOKEN',url.href,url.searchParams.get('state')])assert(!publicOutput.includes(secret));
+      assert(!response.body.includes('http'));assert(!publicOutput.includes('error_description'));
+    }
+  });
+  await test('Structured error codes take precedence over free-form descriptions',async()=>{
+    for(const [params,expected] of [
+      [{error:'access_denied',error_description:'SYNTHETIC invalid_client detail'},'CANCELLED'],
+      [{error:'invalid_client',error_description:'SYNTHETIC access_denied detail'},'CONFIG'],
+      [{error:'access_denied',error_code:'unexpected_failure'},'CONFIG'],
+    ]){
+      const f=fixture();await f.service.signInGoogle();await localRequest(failureCallback(f,params));
+      assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+expected);assert.equal(f.requests.length,0);
+    }
+  });
+  await test('Empty or incomplete callback failures produce fixed generic guidance and release login',async()=>{
+    for(const params of [{},{error:''},{error_code:''},{error_description:''},{code:'x'.repeat(2049)}]){
+      const f=fixture();await f.service.signInGoogle();const response=await localRequest(failureCallback(f,params));
+      assert.equal(response.status,400);assert.match(response.body,/완료하지 못/);
+      assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_FAILED');assert.equal(f.service.getState().pending,false);
+      assert.equal(f.requests.length,0);assert(!fs.existsSync(f.sessionFile));
+    }
+  });
+  await test('Each provider failure permits a fresh Google attempt and clears the error before successful login',async()=>{
+    for(const error of ['access_denied','invalid_client','unrecognized_error']){
+      const f=fixture();await f.service.signInGoogle();const previous=failureCallback(f,{error});await localRequest(previous);
+      assert(f.service.getState().error);await f.service.signInGoogle();
+      assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().pending,true);
+      const next=callback(f);assert.notEqual(next.searchParams.get('state'),previous.searchParams.get('state'));
+      const stale=new URL(next);stale.searchParams.delete('code');stale.searchParams.set('state',previous.searchParams.get('state'));stale.searchParams.set('error','invalid_client');
+      assert.equal((await localRequest(stale)).status,400);assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().pending,true);
+      assert.equal(f.requests.length,0);assert.equal((await localRequest(next)).status,200);
+      assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().pending,false);assert.equal(f.service.getState().error,'');
+      assert.equal(f.requests.filter(r=>r.endpoint.includes('grant_type=pkce')).length,1);
+    }
+  });
+  await test('Keep-alive clients cannot reuse an old callback listener across rapid fixed-port retries',async()=>{
+    const reservation=http.createServer();await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
+    const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
+    const f=fixture({callbackPort:port}),agent=new http.Agent({keepAlive:true,maxSockets:1});
+    try{
+      for(const [error,category] of [['invalid_client','CONFIG'],['access_denied','CANCELLED'],['unknown_error','FAILED']]){
+        await f.service.signInGoogle();const response=await localRequest(failureCallback(f,{error}),{agent});
+        assert.equal(response.headers.connection,'close');assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+category);
+        assert.equal(f.service.getState().pending,false);assert.equal(f.requests.length,0);
+      }
+      await f.service.signInGoogle();const response=await localRequest(callback(f),{agent});
+      assert.equal(response.status,200);assert.equal(response.headers.connection,'close');assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().authenticated,true);
+      assert.equal(f.requests.filter(r=>r.endpoint.includes('grant_type=pkce')).length,1);
+    }finally{agent.destroy()}
+  });
+  await test('Untrusted provider error callbacks cannot change the active login or its error state',async()=>{
+    const f=fixture();await f.service.signInGoogle();const url=failureCallback(f,{error:'invalid_client',error_description:'SYNTHETIC_PRIVATE_DETAIL'});
+    for(const options of [{method:'POST'},{host:'attacker.invalid'},{path:'/unrelated'+url.search}])assert.equal((await localRequest(url,options)).status,400);
+    url.searchParams.set('state','wrong');assert.equal((await localRequest(url)).status,400);
+    assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().pending,true);assert.equal(f.requests.length,0);
+  });
+  await test('A duplicate provider error cannot replace an authorization-code exchange already in progress',async()=>{
+    const gate=deferred(),started=deferred();const f=fixture({onRequest:r=>{if(r.endpoint.includes('grant_type=pkce')){started.resolve();return gate.promise}}});await f.service.signInGoogle();
+    const first=localRequest(callback(f));await started.promise;
+    const duplicate=await localRequest(failureCallback(f,{error:'invalid_client'}));
+    gate.resolve({status:200,body:f.makeSession()});const result=await first;
+    assert.equal(duplicate.status,409);assert.equal(result.status,200);assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().authenticated,true);
+    assert.equal(f.requests.filter(r=>r.endpoint.includes('grant_type=pkce')).length,1);
   });
   await test('Concurrent callback requests consume the authorization code only once',async()=>{
     const gate=deferred(),started=deferred();const f=fixture({onRequest:r=>{if(r.endpoint.includes('grant_type=pkce')){started.resolve();return gate.promise}}});await f.service.signInGoogle();

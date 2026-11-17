@@ -47,7 +47,7 @@ async function scenario(name, options, run) {
         return snapshot;
       },
       onState: callback => { listeners.push(callback); return () => { listeners.splice(listeners.indexOf(callback), 1); }; },
-      signInGoogle: async () => { call('google'); window.__emitAccount({ ...window.__accountState, auth: { ...window.__accountState.auth, pending: true } }); return { pending: true }; },
+      signInGoogle: async () => { call('google'); window.__emitAccount({ ...window.__accountState, auth: { ...window.__accountState.auth, pending: true, error: '' } }); return { pending: true }; },
       cancelSignIn: async () => { call('cancel'); window.__emitAccount({ ...window.__accountState, auth: { ...window.__accountState.auth, pending: false } }); },
       sendEmailCode: async email => { call('send', email); return { sent: true }; },
       verifyEmailCode: async value => { call('verify', value); window.__emitAccount({ auth: { configured: true, authenticated: true, pending: false, user: { id: '11111111-1111-4111-8111-111111111111', email: value.email } }, sync: { connected: false, pending: 0 } }); },
@@ -105,6 +105,51 @@ async function scenario(name, options, run) {
     await page.locator('#account-cancelSignIn').click();
     await page.locator('#account-login').waitFor({ state: 'visible' });
     assert.deepEqual(await page.evaluate(() => window.__calls.map(call => call.method)), ['google', 'cancel']);
+  });
+  for (const [code, expected] of [
+    ['ACCOUNT_GOOGLE_CANCELLED', '구글 로그인을 취소했어요. 다시 시도하거나 로그인 없이 계속 사용할 수 있어요.'],
+    ['ACCOUNT_GOOGLE_CONFIG', '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+    ['ACCOUNT_GOOGLE_FAILED', '구글 로그인을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+  ]) await scenario(`Google callback ${code} is visible, ends waiting and permits a fresh attempt`, {}, async page => {
+    const before = await page.evaluate(() => structuredClone(window.__persisted));
+    await page.locator('#account-google').click();
+    await page.locator('#account-loginPending').waitFor({ state: 'visible' });
+    await page.evaluate(({ state, code }) => window.__emitAccount({ ...state, auth: { ...state.auth, pending: false, error: code } }), { state: guest, code });
+    await page.locator('#account-message').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#account-message').innerText(), expected);
+    assert(await page.locator('#account-message').evaluate(element => element.classList.contains('err')));
+    assert(await page.locator('#account-loginPending').isHidden());
+    assert(await page.locator('#account-google').isEnabled());
+    assert.equal(await page.locator('#account-status').innerText(), '로그인 없이 사용 중');
+    assert.deepEqual(await page.evaluate(() => window.__persisted), before);
+    assert.deepEqual(await page.evaluate(() => window.__calls.map(call => call.method)), ['google']);
+    await page.locator('[data-nav="todos"]').click();
+    assert.match(await page.locator('#todoList').innerText(), /Synthetic original/);
+    await page.locator('[data-nav="settings"]').click();
+    assert.equal(await page.locator('#account-message').innerText(), expected);
+    await page.locator('#account-google').click();
+    await page.locator('#account-loginPending').waitFor({ state: 'visible' });
+    assert(await page.locator('#account-message').isHidden());
+    assert.equal(await page.evaluate(() => window.__accountState.auth.error), '');
+    assert.deepEqual(await page.evaluate(() => window.__calls.map(call => call.method)), ['google', 'google']);
+    await page.evaluate(state => window.__emitAccount({ ...state, sync: { connected: false, pending: 0 } }), connected);
+    await page.locator('#account-import').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#account-status').innerText(), '로그인 완료 · 자료 연결 전');
+    assert(await page.locator('#account-message').isHidden());
+    assert(await page.locator('#account-connect').isDisabled());
+    assert(!(await page.locator('#account-importConsent').isChecked()));
+  });
+  await scenario('Google guidance uses the fixed code and never renders raw provider diagnostics', {}, async page => {
+    const raw = 'SYNTHETIC_PROVIDER_DIAGNOSTIC https://example.invalid/?code=SYNTHETIC_PROVIDER_CODE <img src=x onerror=alert(1)>';
+    await page.evaluate(({ state, raw }) => window.__emitAccount({ ...state, auth: { ...state.auth, pending: false, error: { code: 'ACCOUNT_GOOGLE_CONFIG', message: raw } } }), { state: guest, raw });
+    await page.locator('#account-message').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#account-message').innerText(), '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.');
+    assert(!(await page.locator('#set-accountCard').innerText()).includes('SYNTHETIC_PROVIDER'));
+    assert(!(await page.locator('#set-accountCard').innerHTML()).includes('example.invalid/?code='));
+    assert.equal(await page.locator('#set-accountCard img').count(), 0);
+    await page.evaluate(state => window.__emitAccount({ ...state, auth: { ...state.auth, error: 'unknown untrusted server details SYNTHETIC_PROVIDER_DIAGNOSTIC' } }), guest);
+    assert.equal(await page.locator('#account-message').innerText(), '계정 연결을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.');
+    assert(!(await page.locator('#set-accountCard').innerText()).includes('SYNTHETIC_PROVIDER'));
   });
   await scenario('Email verification never uploads local data before explicit consent', {}, async page => {
     await page.locator('#account-emailSend').click();

@@ -17,6 +17,9 @@
   function safeError(error, fallback) {
     // Do not copy raw IPC/server errors, URLs, or credentials into the document.
     const value = typeof error === 'string' ? error : String(error?.code || error?.message || '');
+    if (value === 'ACCOUNT_GOOGLE_CANCELLED') return '구글 로그인을 취소했어요. 다시 시도하거나 로그인 없이 계속 사용할 수 있어요.';
+    if (value === 'ACCOUNT_GOOGLE_CONFIG') return '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.';
+    if (value === 'ACCOUNT_GOOGLE_FAILED') return '구글 로그인을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.';
     if (/not.configured|setup.required|account_setup|provider.disabled|oauth_provider|unsupported_provider/i.test(value)) return '계정 연결을 아직 준비하고 있어요. 지금처럼 로그인 없이 사용할 수 있어요.';
     if (/planner_sync_folder/i.test(value)) return '계정 동기화를 사용하려면 저장 위치를 기본 위치로 바꿔 주세요. 기존 자료는 먼저 백업해 주세요.';
     if (/planner_sync_backend_changed/i.test(value)) return '계정 서버 설정이 바뀌어 동기화를 멈췄어요. 기존 서버 설정을 확인해 주세요. 기기 자료는 보관돼 있어요.';
