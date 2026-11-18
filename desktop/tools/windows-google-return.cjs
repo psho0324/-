@@ -337,7 +337,9 @@ async function edgeObservation() {
       channel:'msedge',headless:false,serviceWorkers:'block',viewport:{width:1040,height:700},
       // Even browser-background traffic can only reach a closed loopback proxy;
       // page routing additionally permits only our two owned loopback servers.
-      proxy:{server:'http://127.0.0.1:9',bypass:'127.0.0.1'},
+      // Order matters: Playwright otherwise appends <-loopback> after the
+      // explicit exception and sends our own callback through the closed proxy.
+      proxy:{server:'http://127.0.0.1:9',bypass:'<-loopback>,127.0.0.1'},
       args:['--disable-background-networking','--disable-component-update','--no-first-run','--no-default-browser-check'],
       timeout:25000,
     })}catch{throw inconclusive('Installed Microsoft Edge could not start with an isolated headful profile')}
