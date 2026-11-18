@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const { APP_RETURN_URL } = require('./app-return.js');
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -69,7 +70,7 @@ async function request(url, options) {
   }
 }
 
-function createAccountService({ userDataDir, config, configFile = path.join(__dirname, 'account-config.json'), safeStorage, openExternal, transport = request, now = Date.now, callbackPort = 42883, loginTimeout = 5 * 60 * 1000, onGoogleSignInSuccess = () => {} }) {
+function createAccountService({ userDataDir, config, configFile = path.join(__dirname, 'account-config.json'), safeStorage, openExternal, transport = request, now = Date.now, callbackPort = 42883, loginTimeout = 5 * 60 * 1000, onGoogleSignInSuccess = () => {}, appReturnEnabled = true }) {
   if (!config) try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch { config = null; }
   const backend = validateConfig(config);
   const sessionFile = path.join(userDataDir, 'planner-account-session.enc');
@@ -164,12 +165,48 @@ function createAccountService({ userDataDir, config, configFile = path.join(__di
         const scriptNonce = crypto.randomBytes(16).toString('base64');
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
-          'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${scriptNonce}'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+          'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${scriptNonce}'; style-src 'nonce-${scriptNonce}'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
           'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff', Connection: 'close',
         });
         // Never interpolate provider data or credentials into this completion page.
-        // Browser policy can refuse close(); the fixed fallback must remain readable.
-        res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>로그인 완료 · 내 플래너</title></head><body><main><h1>로그인 완료</h1><p>플래너로 돌아가고 있습니다.</p><p>이 탭이 자동으로 닫히지 않으면 직접 닫아 주세요.</p></main><script nonce="${scriptNonce}">try { history.replaceState(null, '', '/auth/complete'); } catch {} try { window.close(); } catch {}</script></body></html>`);
+        // Only this fixed app-open URL is shared with the browser. It carries no
+        // auth state; browser policy can block both app opening and tab closing.
+        // Keep the visible page alive while an app-open permission prompt may be
+        // waiting. Once the document is hidden, closing is still best effort.
+        // Isolated private builds and source runs must not open the separately
+        // installed public app. Only an explicitly enabled capability adds it.
+        const canReturn = appReturnEnabled === true;
+        const returnStyle = canReturn ? `
+#open-planner { display: block; min-height: 48px; padding: 12px 16px; border-radius: 10px; background: #314b36; color: #fff; font-weight: 700; text-align: center; text-decoration: none; }
+#open-planner:focus-visible { outline: 3px solid #8ca873; outline-offset: 4px; }
+@media (prefers-color-scheme: dark) { #open-planner { background: #bdd4a0; color: #1e2a20; } }
+` : '';
+        const returnAction = canReturn ? `<p><a id="open-planner" href="${APP_RETURN_URL}" rel="noreferrer">플래너로 돌아가기</a></p>
+<p class="guidance">앱이 자동으로 열리지 않으면 위 버튼을 눌러 주세요. 브라우저가 묻는 경우 ‘열기’를 선택해 주세요.</p>
+<p class="guidance">버튼으로도 열리지 않으면 작업 표시줄의 내 플래너를 눌러 주세요.</p>` : '<p class="guidance">로그인을 시작한 앱으로 돌아가 주세요. 작업 표시줄에서 실행 중인 앱을 선택할 수 있습니다.</p>';
+        const returnScript = canReturn ? "try { document.getElementById('open-planner').click(); } catch {} " : '';
+        res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인 완료 · 내 플래너</title>
+<style nonce="${scriptNonce}">
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f5f6f2; color: #253227; }
+main { width: min(100%, 440px); padding: 32px; border: 1px solid #dce2d5; border-radius: 20px; background: #fff; }
+h1 { margin: 0 0 16px; font-size: 1.75rem; }
+p { margin: 16px 0 0; line-height: 1.65; }
+.guidance { font-size: .92rem; color: #586752; }
+@media (prefers-color-scheme: dark) {
+  body { background: #151c17; color: #eef3e9; }
+  main { background: #202b23; border-color: #43513d; }
+  .guidance { color: #c1cbb9; }
+}
+${returnStyle}
+</style></head><body><main><h1>로그인 완료</h1>
+<p>내 플래너에 로그인했습니다.</p>
+${returnAction}
+<p class="guidance">이 탭이 자동으로 닫히지 않으면 직접 닫아 주세요.</p>
+</main><script nonce="${scriptNonce}">try { history.replaceState(null, '', '/auth/complete'); } catch {} const closeWhenHidden = () => { if (document.visibilityState === 'hidden') { try { window.close(); } catch {} } }; document.addEventListener('visibilitychange', closeWhenHidden); ${returnScript}closeWhenHidden();</script></body></html>`);
       };
       let u;
       try { if (req.url.length > 8192) throw Error('oversized callback'); u = new URL(req.url, 'http://127.0.0.1'); }

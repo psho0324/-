@@ -84,6 +84,13 @@ jobs:
           $env:PLANNER_SMOKE_LABEL = 'installed'
           npm run test:desktop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Diagnose installed Windows login return in isolated Edge
+        if: github.ref == 'refs/heads/fix/windows-google-return'
+        shell: pwsh
+        run: |
+          $env:PLANNER_EXECUTABLE = Join-Path $env:RUNNER_TEMP 'my-planner-installed/MyPlanner.exe'
+          node tools/windows-google-return.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify real installed update and data preservation
         shell: pwsh
         run: |

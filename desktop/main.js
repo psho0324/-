@@ -7,6 +7,7 @@ const { createUpdateController } = require('./updater.js');
 const { createReminderScheduler } = require('./reminders.js');
 const { createAccountService } = require('./account-service.js');
 const { createSyncService } = require('./sync-service.js');
+const { APP_RETURN_SCHEME, classifyAppLaunch } = require('./app-return.js');
 const packageInfo = require('./package.json');
 const accountTestBuild = packageInfo.plannerAccountTest === true;
 
@@ -95,6 +96,13 @@ function showWindow() {
   win.focus();
 }
 
+function showAccountWindow() {
+  showWindow();
+  // Windows can reject activation from a background OAuth callback. Offer
+  // taskbar attention instead of repeatedly trying to steal keyboard focus.
+  if (process.platform === 'win32' && !win.isFocused()) win.flashFrame(true);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -119,6 +127,10 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => { if (!startHidden || tray === null) win.show(); });
+  if (process.platform === 'win32') {
+    const created = win;
+    created.on('focus', () => { if (!created.isDestroyed()) created.flashFrame(false); });
+  }
 
   // X 버튼: 종료하지 않고 트레이로 숨겨 알림이 계속 오게 합니다.
   win.on('close', (e) => {
@@ -309,9 +321,19 @@ function emitAccountState() {
 // ---------- 시작 ----------
 function start() {
   app.setAppUserModelId(accountTestBuild ? 'com.myplanner.app.accounttest' : 'com.myplanner.app');
-  app.on('second-instance', showWindow); // 앱을 또 실행하면 새 창 대신 기존 창을 앞으로
+  app.on('second-instance', (_event, argv) => {
+    const launch = classifyAppLaunch(argv);
+    if (launch === 'return') showAccountWindow();
+    else if (launch === 'ordinary') showWindow();
+  });
 
   app.whenReady().then(() => {
+    // NSIS registers the same static app-open link. Reinstall/update paths can
+    // change; packaged Windows builds repair their own registration if needed.
+    // Private account-test builds must not replace the installed app's handler.
+    if (process.platform === 'win32' && app.isPackaged && !accountTestBuild) {
+      try { app.setAsDefaultProtocolClient(APP_RETURN_SCHEME); } catch {}
+    }
     store = createStore({ userDataDir: app.getPath('userData') });
     const loaded = store.load();
     data = loaded.data;
@@ -376,7 +398,8 @@ function start() {
     account = createAccountService({
       userDataDir: app.getPath('userData'), safeStorage,
       openExternal: url => shell.openExternal(url),
-      onGoogleSignInSuccess: showWindow,
+      appReturnEnabled: process.platform === 'win32' && app.isPackaged && !accountTestBuild,
+      onGoogleSignInSuccess: showAccountWindow,
     });
     sync = createSyncService({
       userDataDir: app.getPath('userData'), account,

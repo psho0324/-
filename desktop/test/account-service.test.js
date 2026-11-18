@@ -40,6 +40,7 @@ function fixture(options = {}) {
     now:()=>clock, callbackPort:options.callbackPort ?? 0, loginTimeout:options.loginTimeout ?? 10000,
     openExternal:async url=>{opened.push(url);if(options.openExternal)return options.openExternal(url)},
     onGoogleSignInSuccess:options.onGoogleSignInSuccess || (()=>googleReturns.push(true)),
+    appReturnEnabled:options.appReturnEnabled,
     transport:async(url,init)=>{
       const request={url,endpoint:new URL(url).pathname+new URL(url).search,headers:init.headers,body:JSON.parse(init.body)}; requests.push(request);
       if(options.onRequest){const result=await options.onRequest(request,{makeSession});if(result!==undefined)return result;}
@@ -216,15 +217,32 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     assert.equal(response.headers['x-content-type-options'],'nosniff');
     const scriptNonce=response.body.match(/<script nonce="([A-Za-z0-9+/=]+)">/)[1];
     assert(response.headers['content-security-policy'].includes("script-src 'nonce-"+scriptNonce+"'"));
+    assert(response.headers['content-security-policy'].includes("style-src 'nonce-"+scriptNonce+"'"));
+    assert(response.body.includes('<style nonce="'+scriptNonce+'">'));
+    assert.match(response.body,/<meta name="viewport" content="width=device-width, initial-scale=1">/);
     for(const directive of ["default-src 'none'","base-uri 'none'","form-action 'none'","frame-ancestors 'none'"])assert(response.headers['content-security-policy'].includes(directive));
     assert(!response.headers['content-security-policy'].includes('unsafe-inline'));assert.match(response.body,/history\.replaceState/);assert.match(response.body,/window\.close\(\)/);
     assert.match(response.body,/자동으로 닫히지 않으면/);
+    assert.match(response.body,/<a id="open-planner" href="tteodori-planner:\/\/open" rel="noreferrer">플래너로 돌아가기<\/a>/);
+    assert.match(response.body,/document\.getElementById\('open-planner'\)\.click\(\)/);
+    assert.match(response.body,/앱이 자동으로 열리지 않으면/);assert.match(response.body,/작업 표시줄/);
+    assert(!response.body.includes('플래너로 돌아가고 있습니다.'));
     for(const value of ['SYNTHETIC_PRIVATE_AUTH_CODE','SYNTHETIC-ACCESS','SYNTHETIC-REFRESH',url.searchParams.get('state'),url.href])assert(!response.body.includes(value));
     assert.equal(f.googleReturns.length,1);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().error,'');
   });
   await test('Returning the app to the foreground cannot fail an already completed Google login',async()=>{
     const f=fixture({onGoogleSignInSuccess:()=>{assert.equal(f.service.getState().authenticated,true);throw Error('SYNTHETIC_FOCUS_FAILURE')}});
     await f.service.signInGoogle();const response=await localRequest(callback(f));assert.equal(response.status,200);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().error,'');assert(!response.body.includes('SYNTHETIC_FOCUS_FAILURE'));
+  });
+  await test('Disabled app-return capability never opens the separately installed public app',async()=>{
+    for(const appReturnEnabled of [false,'true',1,{}]){
+      const f=fixture({appReturnEnabled});await f.service.signInGoogle();const response=await localRequest(callback(f));
+      assert.equal(response.status,200);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().error,'');
+      assert.equal(f.googleReturns.length,1);assert(fs.existsSync(f.sessionFile));
+      for(const forbidden of ['tteodori-planner:','open-planner','<a ','.click()'])assert(!response.body.includes(forbidden));
+      assert.match(response.body,/로그인을 시작한 앱으로 돌아가/);assert.match(response.body,/작업 표시줄/);
+      assert.match(response.body,/history\.replaceState/);assert.match(response.body,/visibilitychange/);assert.match(response.body,/window\.close\(\)/);
+    }
   });
   await test('Email login and token refresh do not signal a Google browser return',async()=>{
     const f=fixture();await login(f);f.setTime(CLOCK+3600*1000);await f.service.rpc('planner_sync',{});assert.equal(f.googleReturns.length,0);

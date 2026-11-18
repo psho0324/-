@@ -17,13 +17,14 @@ function fixture(options={}){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'planner-account-ipc-'));
   const rawHandlers={},rawListeners={},calls=[],windows=[],accountListeners=new Set();
   const paths={appData:dir,userData:dir};
-  const app=new EventEmitter();Object.assign(app,{isPackaged:!!options.packaged,getVersion:()=> '0.1.2',getPath:name=>paths[name]||dir,setName:name=>calls.push(['set-name',name]),setPath:(name,value)=>{assert(fs.existsSync(value));paths[name]=value;calls.push(['set-path',name,value])},getAppPath:()=>'/synthetic-app',requestSingleInstanceLock:()=>{calls.push(['single-instance',paths.userData]);return true},setAppUserModelId:id=>calls.push(['app-id',id]),whenReady:()=>Promise.resolve(),setLoginItemSettings:value=>calls.push(['auto-start',value]),quit(){},exit:code=>calls.push(['exit',code])});
+  const app=new EventEmitter();Object.assign(app,{isPackaged:!!options.packaged,getVersion:()=> '0.1.2',getPath:name=>paths[name]||dir,setName:name=>calls.push(['set-name',name]),setPath:(name,value)=>{assert(fs.existsSync(value));paths[name]=value;calls.push(['set-path',name,value])},getAppPath:()=>'/synthetic-app',requestSingleInstanceLock:()=>{calls.push(['single-instance',paths.userData]);return true},setAppUserModelId:id=>calls.push(['app-id',id]),whenReady:()=>Promise.resolve(),setLoginItemSettings:value=>calls.push(['auto-start',value]),setAsDefaultProtocolClient:scheme=>{calls.push(['register-protocol',scheme]);if(options.registrationFails)throw Error('Synthetic registration unavailable');return true},quit(){},exit:code=>calls.push(['exit',code])});
   const data={events:[],todos:[],projects:[],settings:{notifications:true}},authState={configured:false,authenticated:false,user:null,needsLogin:false,pending:false,error:''},syncState={configured:false,connected:false,pending:0,status:'unconfigured',user:null};
   let saved=data,flushAnswer=true,custom=false,backupFails=false,syncOptions,accountOptions,account;
-  class Window{
-    constructor(){this.destroyed=false;this.minimized=false;this.visible=false;this.focused=false;this.webContents={mainFrame:{},send:(channel,value)=>{calls.push(['send',channel,value]);if(channel==='app:flush-request')queueMicrotask(()=>rawListeners['app:flush-done']?.(trusted(),value,flushAnswer));},on(){},setWindowOpenHandler(){}};windows.push(this);}
-    setMenuBarVisibility(){}loadFile(){}once(){}on(){}isDestroyed(){return this.destroyed}isMinimized(){return this.minimized}
-    restore(){this.minimized=false;calls.push(['window-restore'])}show(){this.visible=true;calls.push(['window-show'])}hide(){this.visible=false}focus(){this.focused=true;calls.push(['window-focus'])}
+  class Window extends EventEmitter{
+    constructor(){super();this.destroyed=false;this.minimized=false;this.visible=false;this.focused=false;this.webContents={mainFrame:{},send:(channel,value)=>{calls.push(['send',channel,value]);if(channel==='app:flush-request')queueMicrotask(()=>rawListeners['app:flush-done']?.(trusted(),value,flushAnswer));},on(){},setWindowOpenHandler(){}};windows.push(this);}
+    setMenuBarVisibility(){}loadFile(){}once(){}isDestroyed(){return this.destroyed}isMinimized(){return this.minimized}isFocused(){return this.focused}
+    flashFrame(value){calls.push(['window-flash',value])}
+    restore(){this.minimized=false;calls.push(['window-restore'])}show(){this.visible=true;calls.push(['window-show'])}hide(){this.visible=false}focus(){this.focused=!options.denyFocus;calls.push(['window-focus'])}
   }
   const trusted=()=>({sender:windows[0].webContents,senderFrame:windows[0].webContents.mainFrame});
   const store={load:()=>({data}),save:next=>{calls.push(['save']);saved=next},backupIfNeeded(){},backupNow:()=>{calls.push(['backup']);if(backupFails)throw Error('synthetic backup failure')},listBackups:()=>[],info:()=>({custom,dataDir:dir,backupDir:path.join(dir,'backups')}),inspectDir:()=>({ok:true,hasData:false}),useDir:(...args)=>{calls.push(['useDir',...args]);custom=true;return saved},restoreBackup:()=>saved,checkExternal:()=>null};
@@ -45,7 +46,7 @@ function fixture(options={}){
     require:name=>{
       if(name==='electron')return electron;
       if(name==='./package.json')return{...require('../package.json'),plannerAccountTest:options.testBuild===true,plannerTestTarget:'0.1.3'};
-      if(name==='electron-updater'){calls.push(['updater-module']);throw Error('Test fixture must not load the live updater')}
+      if(name==='electron-updater'){calls.push(['updater-module']);return{autoUpdater:{}}}
       if(name==='./store.js')return{createStore:()=>store};
       if(name==='./updater.js')return{createUpdateController:()=>updater};
       if(name==='./reminders.js')return{createReminderScheduler:()=>({tick(){calls.push(['reminder-tick'])},dispose(){}})};
@@ -59,7 +60,7 @@ function fixture(options={}){
     },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../main.js'),'utf8'),sandbox);
-  const f={dir,calls,windows,rawHandlers,rawListeners,authState,syncState,authMethods,syncMethods,invoke:(name,...args)=>rawHandlers[name](trusted(),...args),trusted,getSyncOptions:()=>syncOptions,getAccountOptions:()=>accountOptions,getAccount:()=>account,emitAccountState:()=>{for(const cb of accountListeners)cb({...authState})},setCustom:value=>{custom=value},setBackupFails:value=>{backupFails=value},setFlushAnswer:value=>{flushAnswer=value},dispose:()=>{account?.dispose?.()}};fixtures.push(f);return f;
+  const f={app,dir,calls,windows,rawHandlers,rawListeners,authState,syncState,authMethods,syncMethods,invoke:(name,...args)=>rawHandlers[name](trusted(),...args),trusted,getSyncOptions:()=>syncOptions,getAccountOptions:()=>accountOptions,getAccount:()=>account,emitAccountState:()=>{for(const cb of accountListeners)cb({...authState})},setCustom:value=>{custom=value},setBackupFails:value=>{backupFails=value},setFlushAnswer:value=>{flushAnswer=value},dispose:()=>{account?.dispose?.()}};fixtures.push(f);return f;
 }
 let passed=0,failed=0;
 async function test(name,run){try{await run();passed++;console.log('PASS',name)}catch(error){failed++;console.error('FAIL',name,'\n',error.stack)}}
@@ -106,7 +107,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     f.authMethods.signInGoogle=async()=>{throw Object.assign(Error('SYNTHETIC-SERVER-SECRET'),{code:'ACCOUNT_BAD;SYNTHETIC-SECRET'})};await assert.rejects(f.invoke('account:google'),error=>error.message==='ACCOUNT_FAILED');
   });
   await test('Completed Google sign-in restores and focuses the existing hidden or minimized app',async()=>{
-    const f=fixture();await tick();const window=f.windows[0];
+    const f=fixture({platform:'win32'});await tick();const window=f.windows[0];
     assert.equal(typeof f.getAccountOptions().onGoogleSignInSuccess,'function');
     window.visible=false;window.minimized=true;const before=f.calls.length;
     f.getAccountOptions().onGoogleSignInSuccess();
@@ -114,8 +115,44 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     assert.deepEqual(f.calls.slice(before).map(call=>call[0]),['window-restore','window-show','window-focus']);
     assert.equal(f.windows.length,1);
   });
+  await test('Denied Windows activation requests taskbar attention and actual focus clears it',async()=>{
+    const f=fixture({platform:'win32',denyFocus:true});await tick();const window=f.windows[0];
+    f.getAccountOptions().onGoogleSignInSuccess();
+    assert.equal(window.visible,true);assert.equal(window.focused,false);
+    assert.deepEqual(f.calls.filter(call=>call[0]==='window-flash').map(call=>call[1]),[true]);
+    window.focused=true;window.emit('focus');
+    assert.deepEqual(f.calls.filter(call=>call[0]==='window-flash').map(call=>call[1]),[true,false]);
+    assert.equal(window.listenerCount('focus'),1);
+  });
+  await test('Static app-open link restores the existing app without auth or sync requests',async()=>{
+    const {APP_RETURN_URL}=require('../app-return');
+    const f=fixture({platform:'win32'});await tick();const window=f.windows[0];window.visible=false;window.minimized=true;
+    const before=f.calls.length;
+    f.app.emit('second-instance',{},['MyPlanner.exe',APP_RETURN_URL]);
+    assert.deepEqual(f.calls.slice(before).map(call=>call[0]),['window-restore','window-show','window-focus']);
+    assert.equal(window.visible,true);assert.equal(window.focused,true);assert.equal(f.windows.length,1);
+    for(const url of [APP_RETURN_URL+'?code=SYNTHETIC',APP_RETURN_URL+'#access_token=SYNTHETIC','tteodori-planner:open','https://example.invalid/']) {
+      const start=f.calls.length;f.app.emit('second-instance',{},['MyPlanner.exe',url]);assert.equal(f.calls.length,start);
+    }
+    window.visible=false;f.app.emit('second-instance',{},['MyPlanner.exe']);assert.equal(window.visible,true);
+    assert(!f.calls.some(call=>call[0]==='google'||call[0]==='email-verify'||call[0]==='connect'||call[0]==='sync'||call[0]==='network'));
+  });
+  await test('Only the packaged Windows app registers its handler, private tests keep the live handler',async()=>{
+    const {APP_RETURN_SCHEME}=require('../app-return');
+    for(const options of [{platform:'win32',packaged:true},{platform:'win32',packaged:false},{platform:'linux',packaged:true},{platform:'win32',packaged:true,testBuild:true}]) {
+      const f=fixture(options);await tick();const registered=f.calls.filter(call=>call[0]==='register-protocol');
+      assert.deepEqual(registered,options.platform==='win32'&&options.packaged&&!options.testBuild?[['register-protocol',APP_RETURN_SCHEME]]:[]);
+      assert.equal(f.getAccountOptions().appReturnEnabled,options.platform==='win32'&&options.packaged&&!options.testBuild);
+    }
+  });
+  await test('A failed app-open registration preserves local saving and taskbar fallback',async()=>{
+    const f=fixture({platform:'win32',packaged:true,registrationFails:true,denyFocus:true});await tick();
+    assert(f.windows.length===1);await f.invoke('data:save',{events:[],todos:[],projects:[],settings:{autoStart:false}});
+    assert(f.calls.some(call=>call[0]==='save'));
+    f.getAccountOptions().onGoogleSignInSuccess();assert(f.calls.some(call=>call[0]==='window-flash'&&call[1]===true));
+  });
   await test('Ordinary account state changes and login failures never steal window focus',async()=>{
-    const f=fixture();await tick();const window=f.windows[0];window.visible=false;window.minimized=true;
+    const f=fixture({platform:'win32',denyFocus:true});await tick();const window=f.windows[0];window.visible=false;window.minimized=true;
     for(const state of [
       {pending:true,authenticated:false,error:''},
       {pending:false,authenticated:false,error:'ACCOUNT_GOOGLE_CONFIG'},
@@ -123,7 +160,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       {pending:false,authenticated:true,error:'',user:{id:A,email:'test@example.invalid'}},
     ]){Object.assign(f.authState,state);f.emitAccountState()}
     assert(f.calls.some(call=>call[0]==='send'&&call[1]==='account:state'));
-    assert(!f.calls.some(call=>['window-restore','window-show','window-focus'].includes(call[0])));
+    assert(!f.calls.some(call=>['window-restore','window-show','window-focus','window-flash'].includes(call[0])));
     assert.equal(window.minimized,true);assert.equal(window.visible,false);assert.equal(window.focused,false);
   });
   await test('Connecting forwards only an explicit boolean import choice',async()=>{

@@ -11,7 +11,7 @@ const TEST_APP_ID = 'com.myplanner.app.accounttest';
 const TEST_EXE = 'MyPlannerAccountTest';
 const TEST_TARGET = '0.1.3';
 const ROOT_RUNTIME = Object.freeze([
-  'main.js', 'preload.js', 'store.js', 'updater.js', 'account-service.js',
+  'main.js', 'preload.js', 'store.js', 'updater.js', 'account-service.js', 'app-return.js',
   'sync-service.js', 'reminders.js', 'account-config.json',
 ]);
 const PACKAGE_FILES = Object.freeze([...ROOT_RUNTIME, 'renderer/**', 'assets/**', 'package.json']);

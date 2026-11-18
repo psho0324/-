@@ -115,12 +115,10 @@ const sample = (n) => ({ events: Array.from({ length: n }, (_, i) => ({ id: 'e' 
     assert.strictEqual(log.notifications.filter((n) => n.o.body.includes('트레이')).length, 1, '안내는 한 번만');
   });
 
-  await test('트레이 클릭 → 창이 다시 보임 / 메뉴에 열기·종료', () => {
-    const tray = log.windows && fakeElectron.Tray && null; // eslint-disable-line no-unused-vars
+  await test('앱을 다시 실행하면 기존 창이 다시 보임 (모의 검사)', () => {
     const w = log.windows[0];
     w.visible = false;
-    // 트레이 객체는 main.js 내부에 있으므로 second-instance 로 같은 경로를 검증
-    appEvents['second-instance']();
+    appEvents['second-instance']({}, ['MyPlanner.exe']);
     assert.strictEqual(w.visible, true);
   });
 

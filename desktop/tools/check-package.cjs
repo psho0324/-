@@ -19,7 +19,7 @@ assert(fs.existsSync(archive), 'Missing built archive: ' + archive);
 const entries = asar.listPackage(archive).map(p => p.replace(/^[/\\]+/, '').replace(/\\/g, '/'));
 // ASAR's lookup API splits on the host separator; keep POSIX only for policy checks.
 const files = entries.filter(p => !asar.statFile(archive, path.normalize(p)).files);
-const required = ['main.js', 'preload.js', 'store.js', 'updater.js', 'account-service.js', 'account-config.json', 'sync-service.js', 'reminders.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css', 'renderer/storage.js', 'renderer/recurrence.js', 'renderer/holidays.js', 'renderer/quickadd.js', 'renderer/goals.js', 'renderer/theme.js', 'renderer/sync-core.js', 'renderer/account-ui.js', 'renderer/controls.css', 'assets/icon.png', 'assets/icon.ico', 'package.json'];
+const required = ['main.js', 'preload.js', 'store.js', 'updater.js', 'account-service.js', 'app-return.js', 'account-config.json', 'sync-service.js', 'reminders.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css', 'renderer/storage.js', 'renderer/recurrence.js', 'renderer/holidays.js', 'renderer/quickadd.js', 'renderer/goals.js', 'renderer/theme.js', 'renderer/sync-core.js', 'renderer/account-ui.js', 'renderer/controls.css', 'assets/icon.png', 'assets/icon.ico', 'package.json'];
 for (const file of required) assert(files.includes(file), 'Required runtime file missing: ' + file);
 // Compare runtime dependency names AND versions with npm's installed production tree.
 const production = new Set();
@@ -45,7 +45,7 @@ for (const file of files) {
       checkedPackages.add(folder);
     }
   } else {
-    assert(/^(?:main\.js|preload\.js|store\.js|updater\.js|account-service\.js|account-config\.json|sync-service\.js|reminders\.js|package\.json|renderer\/.+|assets\/.+)$/.test(file), 'Unexpected app file: ' + file);
+    assert(/^(?:main\.js|preload\.js|store\.js|updater\.js|account-service\.js|app-return\.js|account-config\.json|sync-service\.js|reminders\.js|package\.json|renderer\/.+|assets\/.+)$/.test(file), 'Unexpected app file: ' + file);
     assert(!/preview-seed|README/i.test(file), 'Development data in package: ' + file);
     if (file !== 'package.json') assert.deepEqual(asar.extractFile(archive, path.normalize(file)), fs.readFileSync(path.join(root, file)), 'Packaged source differs: ' + file);
   }
