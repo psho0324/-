@@ -48,9 +48,9 @@ function publicSummary(value) {
       pkce:attempt.pkceAdvanced,pending:attempt.pendingAfter,nav:attempt.navigationError,clean:attempt.urlCleaned,currentFg:state?.currentProduct?.settled?.foregroundPlanner,shell:attempt.shellReadyBeforeNavigation,
       protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
         auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,clickMs:protocol.arrivalAfterClickMs,
-        late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs}:undefined,
-        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2)},
-        nativeLink:protocol.nativeLink?.nativeClicked===true,linkOwnerMismatch:protocol.nativeLink?.ownershipMismatch,namedLinks:protocol.nativeLink?.namedCount,ownedLinks:protocol.nativeLink?.ownedCount,
+        late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs,foreground:protocol.lateSettled?.foregroundPlanner,visible:protocol.lateSettled?.visible,minimized:protocol.lateSettled?.minimized,topmost:protocol.lateSettled?.topmost,singleWindow:protocol.lateSingleWindow}:undefined,
+        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2),workerFault:dialog?.workerFault,workerPhase:dialog?.workerPhase},
+        nativeLink:protocol.nativeLink?.nativeClicked===true,linkOwnerMismatch:protocol.nativeLink?.ownershipMismatch,namedLinks:protocol.nativeLink?.namedCount,ownedLinks:protocol.nativeLink?.ownedCount,linkFault:protocol.nativeLink?.workerFault,linkPhase:protocol.nativeLink?.workerPhase,
         error:shortError(protocol.errors)}:undefined};
   });
   return{status:value.status,packaged:value.packaged,runtime:value.runtime,desktop:value.desktop,
@@ -211,20 +211,46 @@ if($target){
 }
 `);
 const edgeDialogFile=path.join(owned,'edge-protocol-dialog.ps1');
+const workerFaultMapping=String.raw`
+function Get-OwnedWorkerFault($Record){
+ $failure=$Record.Exception;$detail='';$types=''
+ for($level=0;$failure -and $level -lt 4;$level++){$detail+=' '+$failure.Message;$types+=' '+$failure.GetType().Name;$failure=$failure.InnerException}
+ if($detail -match 'Owned foreground click precondition failed'){return 'FOREGROUND_PRECONDITION'}
+ if($detail -match 'Another window covers the owned click target'){return 'WINDOW_COVERED'}
+ if($detail -match 'Owned click target changed before input'){return 'WINDOW_CHANGED'}
+ if($detail -match 'Another UI element covers the owned permission button'){return 'PERMISSION_POINT_MISMATCH'}
+ if($detail -match 'Another UI element covers the owned app-return hyperlink'){return 'LINK_POINT_MISMATCH'}
+ if($detail -match 'permission button is not visible'){return 'PERMISSION_NOT_VISIBLE'}
+ if($detail -match 'no safe bounds'){return 'BOUNDS_INVALID'}
+ if($detail -match 'Expected one visible owned app-return hyperlink'){return 'LINK_MISSING'}
+ if($detail -match 'Compilation errors|Cannot add type'){return 'NATIVE_TYPE_COMPILE'}
+ if($types -match 'TypeNotFound|FileNotFound' -or $detail -match '(Cannot|Unable to|Could not).*(find|load).*(type|assembly)'){return 'TYPE_MISSING'}
+ if($types -match 'ElementNotAvailable' -or $detail -match 'element.*not.*available'){return 'STALE_ELEMENT'}
+ if($detail -match 'outside the owned browser'){return 'OWNERSHIP_MISMATCH'}
+ return 'WORKER_FAILURE'
+}
+`;
 fs.writeFileSync(edgeDialogFile,'\ufeff'+String.raw`
 param([string]$Native,[string]$Window,[string]$ExpectedOwner,[ValidateSet('accept','cancel')][string]$Action,[int]$WaitMilliseconds=1500)
+${workerFaultMapping}
 $ErrorActionPreference='Stop'
+$result=@{present=$false;acted=$false;dismissed=$false;absenceConfirmed=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
+$phase='guard'
+try{
 if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
+$phase='load-types'
 Add-Type -Path $Native
+Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+$phase='lookup-root'
 $target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
 if($target -eq [IntPtr]::Zero -or [PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing dialog input outside the owned browser'}
 $end=[DateTime]::UtcNow.AddMilliseconds([Math]::Min(6000,[Math]::Max(0,$WaitMilliseconds)))
-$result=@{present=$false;acted=$false;dismissed=$false;absenceConfirmed=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
 $knownApps=@('my-planner','myplanner','electron','내 플래너')
 $walker=[Windows.Automation.TreeWalker]::ControlViewWalker
 do{
+ $phase='match-control'
  $root=[Windows.Automation.AutomationElement]::FromHandle($target)
  $condition=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button)
  $buttons=$root.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)
@@ -274,11 +300,14 @@ do{
   if($chosen.Current.IsOffscreen){throw 'Owned permission button is not visible'}
   $key=$chosen.GetRuntimeId() -join ':';$bounds=$chosen.Current.BoundingRectangle
   if($bounds.Width -lt 10 -or $bounds.Height -lt 10){throw 'Owned permission button has no safe bounds'}
+  $phase='point-lookup'
   $x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
-  $hit=[Windows.Automation.AutomationElement]::FromPoint((New-Object Windows.Point($x,$y)));$same=$false
+  $hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
   for($depth=0;$hit -and $depth -lt 8;$depth++) {if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
   if(!$same){throw 'Another UI element covers the owned permission button'}
+  $phase='native-click'
   [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y);$result.acted=$true
+  $phase='dismiss-wait'
   $dismissUntil=[DateTime]::UtcNow.AddMilliseconds(2000)
   do{
    $fresh=[Windows.Automation.AutomationElement]::FromHandle($target);$stillPresent=$false
@@ -290,32 +319,46 @@ do{
  Start-Sleep -Milliseconds 100
 }while([DateTime]::UtcNow -lt $end)
 if(!$result.present -and $result.knownButtons.Count -eq 0){$result.absenceConfirmed=$true}
+}catch{$result.workerFault=Get-OwnedWorkerFault $_;$result.workerPhase=$phase}
 $result | ConvertTo-Json -Compress
 `);
 const edgeLinkFile=path.join(owned,'edge-return-link.ps1');
 fs.writeFileSync(edgeLinkFile,'\ufeff'+String.raw`
 param([string]$Native,[string]$Window,[string]$ExpectedOwner)
+${workerFaultMapping}
 $ErrorActionPreference='Stop'
+$result=@{matched=$false;nativeClicked=$false;pointMatched=$false}
+$phase='guard'
+try{
 if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
+$phase='load-types'
 Add-Type -Path $Native
+Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+$phase='lookup-root'
 $target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
 if([PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing link input outside the owned browser'}
 $root=[Windows.Automation.AutomationElement]::FromHandle($target)
+$phase='match-control'
 $condition=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Hyperlink)
 $namedLinks=@($root.FindAll([Windows.Automation.TreeScope]::Descendants,$condition) | Where-Object {$_.Current.Name -eq '플래너로 돌아가기' -and $_.Current.IsEnabled -and !$_.Current.IsOffscreen})
 $returnLinks=@($namedLinks | Where-Object {$_.Current.ProcessId -eq $owner})
-if($returnLinks.Count -ne 1){@{matched=$false;nativeClicked=$false;namedCount=$namedLinks.Count;ownedCount=$returnLinks.Count;ownershipMismatch=($namedLinks.Count -gt $returnLinks.Count)} | ConvertTo-Json -Compress;exit}
+if($returnLinks.Count -ne 1){$result.namedCount=$namedLinks.Count;$result.ownedCount=$returnLinks.Count;$result.ownershipMismatch=$namedLinks.Count -gt $returnLinks.Count;throw 'Expected one visible owned app-return hyperlink'}
+$result.matched=$true
 $link=$returnLinks[0];$bounds=$link.Current.BoundingRectangle;$key=$link.GetRuntimeId() -join ':'
 if($bounds.Width -lt 20 -or $bounds.Height -lt 15){throw 'Owned app-return hyperlink has no safe bounds'}
 $x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
+$phase='point-lookup'
 $walker=[Windows.Automation.TreeWalker]::ControlViewWalker
-$hit=[Windows.Automation.AutomationElement]::FromPoint((New-Object Windows.Point($x,$y)));$same=$false
+$hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
 for($depth=0;$hit -and $depth -lt 8;$depth++){if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
 if(!$same){throw 'Another UI element covers the owned app-return hyperlink'}
+$result.pointMatched=$true;$phase='native-click'
 [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y)
-@{matched=$true;nativeClicked=$true;pointMatched=$true} | ConvertTo-Json -Compress
+$result.nativeClicked=$true
+}catch{$result.workerFault=Get-OwnedWorkerFault $_;$result.workerPhase=$phase}
+$result | ConvertTo-Json -Compress
 `);
 const formFile = path.join(owned, 'foreign-window.ps1');
 fs.writeFileSync(formFile, String.raw`
@@ -456,11 +499,24 @@ async function registerOwnedProtocol() {
   report.edge.associationReady=await waitShellAssociation('owned');
   if(!report.edge.associationReady.ready)throw inconclusive('Shell did not resolve the exact owned executable and isolated profile; no protocol dispatch allowed');
 }
+function ownedWorker(file,args) {
+  try {
+    const output=execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',file,'-Native',nativeFile,...args],{encoding:'utf8',windowsHide:true,timeout:10000,stdio:['ignore','pipe','pipe']});
+    const result=JSON.parse(output.trim());
+    return result&&typeof result==='object'?result:{workerFault:'WORKER_OUTPUT_INVALID',workerPhase:'output'};
+  } catch(error) {
+    // Script parse/launch failures cannot reach its catch. Inspect in memory
+    // only; never expose stderr, the command line, arbitrary UI text or paths.
+    const detail=String(error?.stderr||'');
+    const fault=error?.code==='ETIMEDOUT'?'WORKER_TIMEOUT':/ParserError|ParseException/.test(detail)?'PS_PARSE_ERROR':/TypeNotFound|Cannot find type|Unable to find type/.test(detail)?'TYPE_MISSING':error instanceof SyntaxError?'WORKER_OUTPUT_INVALID':'WORKER_FAILURE';
+    return{workerFault:fault,workerPhase:fault==='PS_PARSE_ERROR'?'parse':fault==='WORKER_OUTPUT_INVALID'?'output':'launch'};
+  }
+}
 function protocolDialog(handle,owner,action,wait=1500) {
-  return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',edgeDialogFile,'-Native',nativeFile,'-Window',handle,'-ExpectedOwner',String(owner),'-Action',action,'-WaitMilliseconds',String(wait)],{encoding:'utf8',windowsHide:true,timeout:10000}).trim());
+  return ownedWorker(edgeDialogFile,['-Window',handle,'-ExpectedOwner',String(owner),'-Action',action,'-WaitMilliseconds',String(wait)]);
 }
 function nativeReturnLink(handle,owner) {
-  return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',edgeLinkFile,'-Native',nativeFile,'-Window',handle,'-ExpectedOwner',String(owner)],{encoding:'utf8',windowsHide:true,timeout:10000}).trim());
+  return ownedWorker(edgeLinkFile,['-Window',handle,'-ExpectedOwner',String(owner)]);
 }
 async function protocolObservation(browserPage,handle,owner,baseline,attemptStartedAt) {
   const requests=async()=>{
@@ -478,6 +534,7 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
     // The current callback may already have triggered a browser permission
     // prompt. Decline it in this synthetic run before testing the visible link.
     result.initialPrompt=protocolDialog(handle,owner,'cancel');
+    if(result.initialPrompt.workerFault)throw inconclusive('Initial permission worker: '+result.initialPrompt.workerFault+' at '+result.initialPrompt.workerPhase);
     result.automaticRequests=(await requests())-baseline;
     if(result.automaticRequests>0){
       result.path='automatic application handoff';
@@ -494,9 +551,13 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
         if(!result.shellReadyBeforeClick)throw inconclusive('Shell no longer resolves the owned isolated profile; explicit dispatch refused');
         const beforeRequests=await requests();
         const clickStartedAt=Date.now();
-        try{result.nativeLink=nativeReturnLink(handle,owner);if(!result.nativeLink.nativeClicked)throw inconclusive('Native app-return hyperlink was not clicked')}
-        catch{if(!browserPage.isClosed()||await requests()<=beforeRequests)throw inconclusive('Explicit application-return link did not complete its browser click')}
+        try{
+          result.nativeLink=nativeReturnLink(handle,owner);
+          if(result.nativeLink.workerFault)throw inconclusive('Return-link worker: '+result.nativeLink.workerFault+' at '+result.nativeLink.workerPhase);
+          if(!result.nativeLink.nativeClicked)throw inconclusive('Native app-return hyperlink was not clicked');
+        }catch(error){if(!browserPage.isClosed()||await requests()<=beforeRequests)throw error.inconclusive?error:inconclusive('Explicit application-return link did not complete its browser click')}
         if(!browserPage.isClosed())result.confirmation=protocolDialog(handle,owner,'accept',6000);
+        if(result.confirmation?.workerFault)throw inconclusive('Open permission worker: '+result.confirmation.workerFault+' at '+result.confirmation.workerPhase);
         if(result.confirmation&&(!result.confirmation.acted||!result.confirmation.dismissed))throw inconclusive('Native app-open confirmation did not dismiss after its click');
         const waitStartedAt=Date.now();
         try {
@@ -510,7 +571,7 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
           const receivedAt=count>beforeRequests?await eventTime(beforeRequests):null;
           result.passiveObservation={initialWindowMs:passiveStartedAt-waitStartedAt,passiveMs:Date.now()-passiveStartedAt,lateArrived:receivedAt!==null,countBefore:beforeRequests,countAfter:count,
             arrivalAfterClickMs:receivedAt===null?null:Math.max(0,receivedAt-clickStartedAt),arrivalAfterWaitMs:receivedAt===null?null:Math.max(0,receivedAt-waitStartedAt)};
-          if(receivedAt!==null){result.lateSettled=observation(probe(plannerHandle,handle));result.lateSingleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1)}
+          result.lateSettled=observation(probe(plannerHandle,handle));result.lateSingleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1);
           throw inconclusive(receivedAt===null?'No app-return event in the initial gate or passive observation; remaining modes stopped':'App-return arrived after the initial gate; latency recorded and remaining modes stopped');
         }
         const receivedAt=await eventTime(beforeRequests);
