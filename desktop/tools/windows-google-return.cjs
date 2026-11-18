@@ -37,6 +37,27 @@ async function bounded(promise, milliseconds, fallback) {
   try{return await Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(fallback),milliseconds)})])}
   finally{clearTimeout(timer)}
 }
+function publicSummary(value) {
+  const shortError=items=>items?.[0]?safeMessage(items[0]).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,120):undefined;
+  const edge=value.edge||{};
+  const modes=(edge.attempts||[]).slice(0,3).map(attempt=>{
+    const state=edge.states?.find(item=>item.mode===attempt.mode);
+    const protocol=state?.protocol;
+    const dialog=protocol?.confirmation||protocol?.initialPrompt;
+    return{mode:attempt.mode,http:attempt.callbackHttpStatus,fresh:attempt.freshCapture,request:attempt.callbackRequestMatched,
+      pkce:attempt.pkceAdvanced,pending:attempt.pendingAfter,nav:attempt.navigationError,clean:attempt.urlCleaned,currentFg:state?.currentProduct?.settled?.foregroundPlanner,
+      protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
+        auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,
+        prompt:{matched:dialog?.present,acted:dialog?.acted,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2)},
+        error:shortError(protocol.errors)}:undefined};
+  });
+  return{status:value.status,packaged:value.packaged,runtime:value.runtime,desktop:value.desktop,
+    locked:(value.states||[]).slice(0,3).map(state=>({mode:state.mode,baselineFg:state.baseline.settled.foregroundPlanner,candidateFg:state.candidate.settled.foregroundPlanner})),
+    edge:{status:edge.status,version:edge.version,chromiumVersion:edge.chromiumVersion,protocolEnabled:edge.protocolEnabled,modes,error:shortError(edge.errors)},
+    installedReturnVerified:value.installedReturnVerified===true,
+    cleanup:{protocol:edge.protocolRegistrationCleaned,browser:edge.browserCleanup,temp:value.cleanup==='removed',fixture:value.fixtureExited},
+    error:shortError(value.errors),unexpectedNetworkCalls:value.unexpectedNetworkCalls};
+}
 async function until(fn, label, timeout = 12000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) { const value = await fn(); if (value) return value; await pause(80); }
@@ -144,24 +165,56 @@ Add-Type -AssemblyName UIAutomationTypes
 $target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
 if($target -eq [IntPtr]::Zero -or [PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing dialog input outside the owned browser'}
 $end=[DateTime]::UtcNow.AddMilliseconds([Math]::Min(6000,[Math]::Max(0,$WaitMilliseconds)))
-$result=@{present=$false;acted=$false;knownButtons=@()}
+$result=@{present=$false;acted=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
+$knownApps=@('my-planner','myplanner','electron','내 플래너')
+$walker=[Windows.Automation.TreeWalker]::ControlViewWalker
 do{
  $root=[Windows.Automation.AutomationElement]::FromHandle($target)
  $condition=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button)
  $buttons=$root.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)
- $open=$null;$cancel=$null
+ $permission=$null
  foreach($button in $buttons){
   if($button.Current.ProcessId -ne $owner -or !$button.Current.IsEnabled){continue}
   $name=$button.Current.Name
   if($name -in @('Open','Open app','Open application','Open Electron','Open MyPlanner','Open my-planner','Electron 열기','MyPlanner 열기','열기','앱 열기','Cancel','취소') -and $name -notin $result.knownButtons){$result.knownButtons+=@($name)}
-  if($name -in @('Open Electron','Open MyPlanner','Open my-planner','Electron 열기','MyPlanner 열기')){$open=$button}
-  elseif($name -in @('Cancel','취소')){$cancel=$button}
+  if($name -notin @('Open','Open app','Open application','Open Electron','Open MyPlanner','Open my-planner','Electron 열기','MyPlanner 열기','열기','앱 열기')){continue}
+  $scope=$walker.GetParent($button)
+  for($depth=0;$depth -lt 6 -and $scope -and !$scope.Equals($root);$depth++){
+   $bounds=$scope.Current.BoundingRectangle
+   # A small dialog subtree must contain both controls and the fixed app-open
+   # permission wording. Do not treat the complete browser/page as a dialog.
+   if($scope.Current.ProcessId -eq $owner -and $bounds.Width -ge 150 -and $bounds.Width -le 900 -and $bounds.Height -ge 100 -and $bounds.Height -le 550){
+    $cancel=$null
+    foreach($candidate in $scope.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)){
+     if($candidate.Current.ProcessId -eq $owner -and $candidate.Current.IsEnabled -and $candidate.Current.Name -in @('Cancel','취소')){$cancel=$candidate;break}
+    }
+    $appMatched=$false;$textMatched=$false
+    if($cancel){
+     foreach($node in $scope.FindAll([Windows.Automation.TreeScope]::Subtree,[Windows.Automation.Condition]::TrueCondition)){
+      if($node.Current.ProcessId -ne $owner){continue}
+      # Inspect labels in memory only; never return arbitrary UI text or URLs.
+      $label=([string]$node.Current.Name).Trim().Replace('"','').Replace("'",'').Replace('“','').Replace('”','').TrimEnd([char[]]'.?!').ToLowerInvariant()
+      $label=$label -replace '\s+',' '
+      if($label -in $knownApps){$appMatched=$true}
+      if($label -in @('this site is trying to open','this site wants to open') -or $label.Contains('wants to open this application')){$textMatched=$true}
+      foreach($knownApp in $knownApps){
+       if($label -in @("this site is trying to open $knownApp","this site wants to open $knownApp","open $knownApp")){$appMatched=$true;$textMatched=$true}
+      }
+     }
+    }
+    $result.permissionAppMatched=$result.permissionAppMatched -or $appMatched
+    $result.permissionTextMatched=$result.permissionTextMatched -or $textMatched
+    if($cancel -and $appMatched -and $textMatched){$permission=@{open=$button;cancel=$cancel};$result.permissionSubtreeMatched=$true;break}
+   }
+   $scope=$walker.GetParent($scope)
+  }
+  if($permission){break}
  }
- # Both exact permission buttons must be present in our own Edge frame. No
- # arbitrary browser UI, checkbox or policy is changed to skip confirmation.
- if($open -and $cancel){
+ # Generic Open is allowed only in the verified owned app-permission subtree.
+ # No arbitrary UI, checkbox or browser policy is changed to skip confirmation.
+ if($permission){
   $result.present=$true
-  $chosen=if($Action -eq 'accept'){$open}else{$cancel}
+  $chosen=if($Action -eq 'accept'){$permission.open}else{$permission.cancel}
   $invoke=$chosen.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
   $invoke.Invoke();$result.acted=$true;break
  }
@@ -577,7 +630,7 @@ async function edgeObservation() {
   try{if(fs.existsSync(marker))fs.rmSync(owned,{recursive:true,force:true,maxRetries:8,retryDelay:100});report.cleanup='removed'}catch(error){report.cleanup={error:safeMessage(error)};process.exitCode=1}
   const label=packaged?'installed':'source';
   fs.writeFileSync(path.join(output,'windows-google-return-'+label+'.json'),JSON.stringify(report,null,2)+'\n');
-  const compact={status:report.status,packaged:report.packaged,runtime:report.runtime,desktop:report.desktop,states:report.states.map(s=>({mode:s.mode,baseline:s.baseline.settled,candidate:s.candidate.settled})),edge:report.edge,installedReturnVerified:report.installedReturnVerified,errors:report.errors,unexpectedNetworkCalls:report.unexpectedNetworkCalls};
+  const compact=publicSummary(report);
   const notice=JSON.stringify(compact).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A');
   console.log('::notice title=Windows OAuth return diagnostic ('+label+')::'+notice);
   if(process.env.GITHUB_STEP_SUMMARY)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,'### Windows OAuth return diagnostic ('+label+')\n\n```json\n'+JSON.stringify(compact,null,2)+'\n```\n\nA conclusive observation is not a claim that a real Google login or user-PC focus is fixed.\n');
