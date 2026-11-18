@@ -149,7 +149,19 @@ function createAccountService({ userDataDir, config, configFile = path.join(__di
   function cancelSignIn() {
     authEpoch++;
     const active = pending; pending = null;
-    if (active) { clearTimeout(active.timer); try { active.server.close(); } catch {} }
+    if (active) {
+      clearTimeout(active.timer);
+      active.closing = true;
+      try { active.server.close(); } catch {}
+      // HTTP close()/closeIdleConnections() do not cover a browser's accepted
+      // TCP preconnect that has not sent a complete request yet. Such a socket
+      // must not survive to send a later attempt to this old nonce/listener.
+      for (const [socket, connection] of active.connections) {
+        if (socket.destroyed || connection.responses.size) continue;
+        if (connection.seenRequest) socket.end();
+        else socket.destroy();
+      }
+    }
     emit(); return state();
   }
   async function signInGoogle() {
@@ -157,8 +169,29 @@ function createAccountService({ userDataDir, config, configFile = path.join(__di
     if (pending) return state();
     const verifier = crypto.randomBytes(32).toString('base64url');
     const nonce = crypto.randomBytes(32).toString('hex');
-    const active = { server: null, timer: null };
+    const active = { server: null, timer: null, closing: false, connections: new Map() };
+    const trackConnection = socket => {
+      let connection = active.connections.get(socket);
+      if (!connection) {
+        connection = { seenRequest: false, responses: new Set() };
+        active.connections.set(socket, connection);
+        socket.once('close', () => active.connections.delete(socket));
+      }
+      return connection;
+    };
     const server = http.createServer(async (req, res) => {
+      const socket = req.socket;
+      const connection = trackConnection(socket);
+      connection.seenRequest = true;
+      connection.responses.add(res);
+      const responseDone = () => {
+        if (!connection.responses.delete(res)) return;
+        // Preserve every in-flight response, including a successful completion
+        // document, until it has flushed. Then finish the owned socket normally.
+        if (active.closing && !connection.responses.size && !socket.destroyed) socket.end();
+      };
+      res.once('finish', responseDone);
+      res.once('close', responseDone);
       // Each attempt owns a new listener; pooled connections must not reach an old one.
       const reply = (status, text) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'no-referrer', Connection: 'close' }); res.end(text); };
       const replySuccess = () => {
@@ -230,6 +263,10 @@ ${returnAction}
         try { onGoogleSignInSuccess(); } catch {}
       } catch (e) { if (pending === active) error = e.message; reply(400, '로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.'); }
       finally { if (pending === active) cancelSignIn(); }
+    });
+    server.on('connection', socket => {
+      trackConnection(socket);
+      if (active.closing) socket.destroy();
     });
     active.server = server; pending = active; error = ''; emit();
     try {

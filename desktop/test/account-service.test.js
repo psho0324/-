@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const net = require('node:net');
 const crypto = require('node:crypto');
 const { createAccountService, validateConfig } = require('../account-service.js');
 
@@ -72,6 +73,27 @@ function failureCallback(f,params) {
   const url=callback(f);url.searchParams.delete('code');
   for(const [key,value] of Object.entries(params))url.searchParams.set(key,value);
   return url;
+}
+async function reservePort() {
+  const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;
+}
+async function preconnect(url,partialHeader=false) {
+  const target=new URL(url),socket=net.createConnection({host:target.hostname,port:Number(target.port)});
+  socket.on('error',()=>{});
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject)});
+  if(partialHeader)socket.write('GET /auth/callback HTTP/1.1\r\n');
+  // Give the server a poll turn to accept the socket/partial header. No HTTP
+  // request event is emitted for either form of speculative connection.
+  await pause(10);return socket;
+}
+async function expectClosed(socket) {
+  if(socket.destroyed)return;
+  await new Promise((resolve,reject)=>{
+    const done=()=>{clearTimeout(timer);resolve()};
+    const timer=setTimeout(()=>{socket.off('close',done);reject(Error('Unused callback preconnection survived its attempt'))},1500);
+    socket.once('close',done);
+  });
 }
 let passed=0,failed=0;
 async function test(name,run){try{await run();passed++;console.log('PASS',name)}catch(error){failed++;console.error('FAIL',name,'\n',error.stack)}}
@@ -325,6 +347,45 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       assert.equal(response.status,200);assert.equal(response.headers.connection,'close');assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().authenticated,true);
       assert.equal(f.requests.filter(r=>r.endpoint.includes('grant_type=pkce')).length,1);
     }finally{agent.destroy()}
+  });
+  await test('Successful OAuth closes unused and partial-header preconnections without truncating its completion document',async()=>{
+    const f=fixture({callbackPort:await reservePort()}),sockets=[];
+    try{
+      await f.service.signInGoogle();const first=callback(f);
+      sockets.push(await preconnect(first),await preconnect(first,true));
+      const response=await localRequest(first);
+      assert.equal(response.status,200);assert(response.body.startsWith('<!doctype html>'));assert(response.body.endsWith('</body></html>'));
+      assert.match(response.body,/로그인 완료/);assert.equal(f.service.getState().pending,false);
+      await Promise.all(sockets.map(expectClosed));
+      await f.service.signInGoogle();const fresh=callback(f);assert.equal(fresh.origin,first.origin);assert.notEqual(fresh.searchParams.get('state'),first.searchParams.get('state'));
+      assert.equal((await localRequest(fresh)).status,200);assert.equal(f.requests.filter(r=>r.endpoint.includes('grant_type=pkce')).length,2);
+    }finally{for(const socket of sockets)socket.destroy()}
+  });
+  await test('Cancel closes speculative sockets but lets an active rejection flush before a fresh fixed-port login',async()=>{
+    const gate=deferred(),started=deferred();let exchanges=0;
+    const f=fixture({callbackPort:await reservePort(),onRequest:r=>{if(r.endpoint.includes('grant_type=pkce')&&++exchanges===1){started.resolve();return gate.promise}}}),sockets=[];
+    try{
+      await f.service.signInGoogle();const first=callback(f),oldReply=localRequest(first).then(value=>({value}),error=>({error}));await started.promise;
+      sockets.push(await preconnect(first),await preconnect(first,true));
+      f.service.cancelSignIn();await Promise.all(sockets.map(expectClosed));
+      await f.service.signInGoogle();const fresh=callback(f);assert.equal(fresh.origin,first.origin);assert.notEqual(fresh.searchParams.get('state'),first.searchParams.get('state'));
+      gate.resolve({status:200,body:f.makeSession()});const old=await oldReply;if(old.error)throw old.error;
+      assert.equal(old.value.status,400);assert.equal(old.value.body,'로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.');
+      assert.equal(f.service.getState().authenticated,false);assert.equal(f.service.getState().pending,true);assert.equal(f.service.getState().error,'');
+      assert.equal((await localRequest(fresh)).status,200);assert.equal(f.service.getState().authenticated,true);assert.equal(f.service.getState().pending,false);
+    }finally{gate.resolve({status:200,body:f.makeSession()});for(const socket of sockets)socket.destroy()}
+  });
+  await test('OAuth timeout and disposal also close never-used callback preconnections',async()=>{
+    for(const stop of ['timeout','dispose']){
+      const f=fixture({loginTimeout:250}),sockets=[];
+      try{
+        await f.service.signInGoogle();const url=callback(f);sockets.push(await preconnect(url),await preconnect(url,true));
+        if(stop==='dispose')f.service.dispose();
+        await Promise.all(sockets.map(expectClosed));assert.equal(f.service.getState().pending,false);
+        assert.equal(f.requests.length,0);assert.equal(f.service.getState().authenticated,false);
+        if(stop==='timeout')assert.match(f.service.getState().error,/시간/);
+      }finally{for(const socket of sockets)socket.destroy()}
+    }
   });
   await test('Untrusted provider error callbacks cannot change the active login or its error state',async()=>{
     const f=fixture();await f.service.signInGoogle();const url=failureCallback(f,{error:'invalid_client',error_description:'SYNTHETIC_PRIVATE_DETAIL'});

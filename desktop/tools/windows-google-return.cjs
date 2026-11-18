@@ -20,6 +20,7 @@ const executable = process.env.PLANNER_EXECUTABLE || require('electron');
 const packaged = !!process.env.PLANNER_EXECUTABLE;
 const report = {
   diagnostic: true, platform: process.platform, packaged,
+  runtime: { osRelease: os.release(), arch: process.arch },
   provider: 'Synthetic PKCE response; shell browser opening captured in memory; no live Google',
   status: 'running', conclusions: [], states: [], errors: [], networkCalls: 0,
   note: 'Foreground ownership and z-order are separate. Conclusive execution is not proof of a product fix.',
@@ -318,7 +319,7 @@ async function protocolObservation(browserPage,handle,owner) {
   return result;
 }
 async function edgeObservation() {
-  const edge=report.edge={browser:'Installed Microsoft Edge, headful, disposable owned profile',status:'running',states:[],blockedRequests:0,errors:[]};
+  const edge=report.edge={browser:'Installed Microsoft Edge, headful, disposable owned profile',status:'running',states:[],attempts:[],blockedRequests:0,errors:[]};
   const edgeProfile=path.join(owned,'edge-profile');
   const tokenCalls=async()=>running.evaluate(()=>globalThis.__returnDiagnostic.networkCalls);
   const initialCalls=await tokenCalls();
@@ -353,6 +354,9 @@ async function edgeObservation() {
       return route.continue();
     });
     const browserSession=await edgeContext.browser().newBrowserCDPSession();
+    const browserVersion=await browserSession.send('Browser.getVersion');
+    edge.version=/Edg\/([0-9.]+)/.exec(browserVersion.userAgent)?.[1]||edgeContext.browser().version();
+    edge.chromiumVersion=/\/([0-9.]+)$/.exec(browserVersion.product)?.[1]||'unavailable';
     const launch=await browserSession.send('Browser.getBrowserCommandLine');
     const profileArgument=launch.arguments.find(arg=>arg.startsWith('--user-data-dir='));
     assert(profileArgument&&path.resolve(profileArgument.slice('--user-data-dir='.length)).toLowerCase()===path.resolve(edgeProfile).toLowerCase(),'Refusing a browser outside the owned profile');
@@ -366,14 +370,31 @@ async function edgeObservation() {
     // Keep a harmless second tab so browsers that allow close() do not destroy
     // the entire owned frame before native measurements can be recorded.
     const keeper=edgeContext.pages()[0]||await edgeContext.newPage();await keeper.goto(origin+'/start');
+    let previousCallback=await running.evaluate(()=>globalThis.__returnDiagnostic.callback);
     for(const mode of ['normal','hidden','minimized']){
+      const attempt={mode,pendingBefore:(await page.evaluate(()=>window.plannerAccount.getState())).auth.pending===true,freshCapture:false,callbackRequestMatched:false,callbackHttpStatus:null,navigationError:null};
+      edge.attempts.push(attempt);
+      await until(async()=>!(await page.evaluate(()=>window.plannerAccount.getState())).auth.pending,'Previous Edge login attempt was still pending');
       const browserPage=await edgeContext.newPage();
       await browserPage.goto(origin+'/start');await browserPage.goto(origin+'/continue');
       const historyReady=await browserPage.evaluate(()=>history.length>=2);
       assert(historyReady,'Synthetic browser history was not established');
+      await running.evaluate(()=>{globalThis.__returnDiagnostic.callback=null});
       await page.evaluate(()=>window.plannerAccount.signInGoogle());
-      const raw=await running.evaluate(()=>globalThis.__returnDiagnostic.callback);assert(raw);
+      const raw=await until(()=>running.evaluate(()=>globalThis.__returnDiagnostic.callback),'Edge login did not capture a new browser callback');
+      attempt.freshCapture=raw!==previousCallback;
+      if(!attempt.freshCapture)throw inconclusive('Edge login reused an earlier captured callback');
+      previousCallback=raw;
       const callback=new URL(raw);callback.searchParams.set('code','SYNTHETIC_WINDOWS_RETURN_CODE');allowedCallbackPort=callback.port;
+      browserPage.on('request',request=>{
+        if(!request.isNavigationRequest())return;
+        const u=new URL(request.url());
+        if(u.host===callback.host&&u.pathname===callback.pathname)attempt.callbackRequestMatched=request.url()===callback.href;
+      });
+      browserPage.on('response',response=>{
+        const request=response.request();
+        if(request.isNavigationRequest()&&request.url()===callback.href){attempt.callbackHttpStatus=response.status();attempt.callbackHttpRejected=response.status()>=400}
+      });
       await plannerState(mode);await browserPage.bringToFront();
       const frame=probe(plannerHandle,'0',browserMainPid);
       if(!frame.externalHandle||frame.externalHandle==='0'||frame.externalPid!==browserMainPid)throw inconclusive('Owned Edge native frame was not found');
@@ -383,15 +404,39 @@ async function edgeObservation() {
       if(Object.values(checks).some(passed=>!passed))throw inconclusive('Edge foreground precondition unstable: '+JSON.stringify(checks));
       const calls=await tokenCalls();
       if(protocolEnabled)await running.evaluate(()=>{globalThis.__returnDiagnostic.protocolRequests=0});
-      try{await browserPage.goto(callback.href,{waitUntil:'domcontentloaded',timeout:12000})}
-      catch{if(!browserPage.isClosed())throw inconclusive('Owned Edge callback navigation did not complete')}
-      await until(async()=>await tokenCalls()===calls+1,'Edge callback did not reach the synthetic PKCE exchange');
+      try{
+        const response=await browserPage.goto(callback.href,{waitUntil:'domcontentloaded',timeout:12000});
+        if(response){attempt.callbackHttpStatus=response.status();attempt.callbackHttpRejected=response.status()>=400}
+      }catch(error){
+        const code=/net::(ERR_[A-Z_]+)/.exec(String(error?.message||''))?.[1];
+        attempt.navigationError=code||(browserPage.isClosed()?'TARGET_CLOSED':error?.name==='TimeoutError'?'NAVIGATION_TIMEOUT':'NAVIGATION_INTERRUPTED');
+      }
+      if(attempt.callbackHttpRejected)throw inconclusive('Owned Edge callback returned a rejected HTTP status');
+      await until(async()=>{
+        const count=await tokenCalls();attempt.pkceAdvanced=count===calls+1;
+        if(count>calls+1)throw inconclusive('Edge callback unexpectedly repeated the synthetic PKCE exchange');
+        return attempt.pkceAdvanced;
+      },'Edge callback did not reach the synthetic PKCE exchange');
+      await until(async()=>!(await page.evaluate(()=>window.plannerAccount.getState())).auth.pending,'Completed Edge login remained pending');
       await pause(350);const baseline=probe(plannerHandle,frame.externalHandle);
-      assert.equal((await page.evaluate(()=>window.plannerAccount.getState())).auth.authenticated,true);
+      const settledAuth=(await page.evaluate(()=>window.plannerAccount.getState())).auth;
+      attempt.authenticated=settledAuth.authenticated===true;attempt.pendingAfter=settledAuth.pending===true;
+      assert.equal(attempt.authenticated,true);
       const closed=browserPage.isClosed();
       let queryRemoved=closed;
-      if(!closed){try{queryRemoved=await browserPage.evaluate(()=>location.pathname==='/auth/complete'&&location.search===''&&location.hash==='')}
+      if(!closed){try{
+        const completion=await browserPage.evaluate(()=>({urlCleaned:location.pathname==='/auth/complete'&&location.search===''&&location.hash==='',completionDom:document.title==='로그인 완료 · 내 플래너'&&document.querySelector('main h1')?.textContent==='로그인 완료'}));
+        queryRemoved=completion.urlCleaned;attempt.completionDom=completion.completionDom;
+      }
         catch{if(browserPage.isClosed())queryRemoved=true;else throw inconclusive('Owned Edge callback URL cleanup could not be observed')}}
+      attempt.urlCleaned=queryRemoved;
+      if(attempt.navigationError){
+        const permittedAbort=['ERR_ABORTED','ERR_UNKNOWN_URL_SCHEME','TARGET_CLOSED','NAVIGATION_TIMEOUT'].includes(attempt.navigationError);
+        const handoff=browserPage.isClosed()&&protocolEnabled&&(await running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests))>0;
+        const currentSuccess=attempt.freshCapture&&attempt.callbackRequestMatched&&attempt.callbackHttpStatus===200&&attempt.pkceAdvanced&&attempt.authenticated&&!attempt.pendingAfter;
+        attempt.navigationAbortValidated=permittedAbort&&currentSuccess&&((attempt.completionDom&&queryRemoved)||handoff);
+        if(!attempt.navigationAbortValidated)throw inconclusive('Edge navigation interruption lacked a validated completed login');
+      }
       if(!queryRemoved)throw inconclusive('Edge callback did not remove authentication URL parameters');
       await running.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];if(w.isMinimized())w.restore();w.show();w.focus();w.moveTop()});
       await pause(350);const candidate=probe(plannerHandle,frame.externalHandle);
@@ -446,6 +491,7 @@ async function edgeObservation() {
   running=await _electron.launch({executablePath:executable,cwd:root,args:[...(packaged?[]:['.']),'--user-data-dir='+profile],env:{...process.env,CI:'true',PLANNER_DISABLE_AUTO_UPDATE:'1'},timeout:30000});
   const actual=await running.evaluate(({app})=>app.getPath('userData'));
   assert.equal(path.resolve(actual).toLowerCase(),path.resolve(profile).toLowerCase(),'Refusing to touch a non-owned app profile');
+  Object.assign(report.runtime,await running.evaluate(({app})=>({electronVersion:process.versions.electron,appVersion:app.getVersion()})));
   // Playwright launches Electron through cmd.exe on Windows. Its child-process
   // PID can belong to that wrapper; the HWND owner must match Electron itself.
   plannerPid=await running.evaluate(()=>process.pid);
@@ -531,7 +577,7 @@ async function edgeObservation() {
   try{if(fs.existsSync(marker))fs.rmSync(owned,{recursive:true,force:true,maxRetries:8,retryDelay:100});report.cleanup='removed'}catch(error){report.cleanup={error:safeMessage(error)};process.exitCode=1}
   const label=packaged?'installed':'source';
   fs.writeFileSync(path.join(output,'windows-google-return-'+label+'.json'),JSON.stringify(report,null,2)+'\n');
-  const compact={status:report.status,packaged:report.packaged,desktop:report.desktop,states:report.states.map(s=>({mode:s.mode,baseline:s.baseline.settled,candidate:s.candidate.settled})),edge:report.edge,installedReturnVerified:report.installedReturnVerified,errors:report.errors,unexpectedNetworkCalls:report.unexpectedNetworkCalls};
+  const compact={status:report.status,packaged:report.packaged,runtime:report.runtime,desktop:report.desktop,states:report.states.map(s=>({mode:s.mode,baseline:s.baseline.settled,candidate:s.candidate.settled})),edge:report.edge,installedReturnVerified:report.installedReturnVerified,errors:report.errors,unexpectedNetworkCalls:report.unexpectedNetworkCalls};
   const notice=JSON.stringify(compact).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A');
   console.log('::notice title=Windows OAuth return diagnostic ('+label+')::'+notice);
   if(process.env.GITHUB_STEP_SUMMARY)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,'### Windows OAuth return diagnostic ('+label+')\n\n```json\n'+JSON.stringify(compact,null,2)+'\n```\n\nA conclusive observation is not a claim that a real Google login or user-PC focus is fixed.\n');

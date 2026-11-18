@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 const { chromium } = require('playwright');
 const { createAccountService } = require('../account-service.js');
 const { APP_RETURN_URL } = require('../app-return.js');
@@ -23,7 +24,7 @@ function fixture(options = {}) {
   service = createAccountService({
     userDataDir: dir,
     config: { url: 'https://callback-test.supabase.co', publishableKey: 'sb_publishable_synthetic_browser_key_1234567890' },
-    callbackPort: 0,
+    callbackPort: options.callbackPort || 0,
     appReturnEnabled: options.appReturnEnabled,
     safeStorage: {
       isEncryptionAvailable: () => true,
@@ -56,7 +57,14 @@ function fixture(options = {}) {
 }
 
 async function scenario(name, options, run) {
-  const f = fixture(options);
+  let callbackPort = 0;
+  if (options.fixedCallbackPort) {
+    const reservation = http.createServer();
+    await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+    callbackPort = reservation.address().port;
+    await new Promise(resolve => reservation.close(resolve));
+  }
+  const f = fixture({ ...options, callbackPort });
   const context = await browser.newContext();
   const external = [], errors = [];
   // Intercept app-open clicks inside every synthetic browser document. These
@@ -199,6 +207,44 @@ async function blockedSuccess(f, context, hide = true) {
     assert.equal(f.focusCalls, 1); assert.equal(f.sessionReadyBeforeFocus, true); assert.equal(f.transport.length, 1);
     await page.evaluate(() => window.__hideSyntheticDocument());
     await page.waitForFunction(() => window.__closeAttempts === 1);
+  });
+  for (const appReturnEnabled of [false, true]) await scenario(`Three fresh Google callbacks reuse one service and browser profile on the same callback port (app return ${appReturnEnabled ? 'enabled' : 'disabled'})`, { blockClose: true, fixedCallbackPort: true, appReturnEnabled }, async ({ f, context }) => {
+    const sockets = new Set();
+    const history = http.createServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', Connection: 'close' });
+      response.end('<!doctype html><title>Synthetic login navigation</title><p>Owned local test page. No account data.</p>');
+    });
+    history.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise(resolve => history.listen(0, '127.0.0.1', resolve));
+    const origin = 'http://127.0.0.1:' + history.address().port;
+    let previousState, callbackOrigin;
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await f.service.signInGoogle();
+        const callback = f.callback({ code: PRIVATE_CODE, hint: PRIVATE_DETAIL });
+        if (callbackOrigin) assert.equal(callback.origin, callbackOrigin);
+        callbackOrigin = callback.origin;
+        assert.notEqual(callback.searchParams.get('state'), previousState);
+        previousState = callback.searchParams.get('state');
+        const page = await context.newPage();
+        await page.goto(origin + '/start');
+        await page.goto(origin + '/continue');
+        const response = await page.goto(callback.href, { waitUntil: 'domcontentloaded' });
+        assert.equal(response.status(), 200, 'A fresh callback must reach the current listener');
+        await page.waitForFunction(() => location.pathname === '/auth/complete' && !location.search && !location.hash);
+        assert.equal(f.transport.length, attempt + 1, 'Every fresh callback must perform its own PKCE exchange');
+        assert.equal(f.focusCalls, attempt + 1); assert.equal(f.sessionReadyBeforeFocus, true);
+        assert.equal(f.service.getState().authenticated, true); assert.equal(f.service.getState().pending, false); assert.equal(f.service.getState().error, '');
+        assert.equal(await page.evaluate(() => window.__appReturnAttempts.length), appReturnEnabled ? 1 : 0);
+        assert.equal(await page.evaluate(() => window.__closeAttempts), 0);
+        const html = await page.content();
+        for (const raw of [PRIVATE_CODE, PRIVATE_DETAIL, PRIVATE_FRAGMENT, ACCESS, REFRESH, previousState]) assert(!html.includes(raw));
+        await page.close();
+      }
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(resolve => history.close(resolve));
+    }
   });
   await scenario('Blocked automatic close leaves fixed completion guidance and removes callback query and fragment', { blockClose: true }, async ({ f, context }) => {
     const { page, response, callback } = await blockedSuccess(f, context);
