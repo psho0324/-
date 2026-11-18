@@ -49,7 +49,7 @@ function publicSummary(value) {
       protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
         auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,clickMs:protocol.arrivalAfterClickMs,
         late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs,foreground:protocol.lateSettled?.foregroundPlanner,visible:protocol.lateSettled?.visible,minimized:protocol.lateSettled?.minimized,topmost:protocol.lateSettled?.topmost,singleWindow:protocol.lateSingleWindow}:undefined,
-        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2),workerFault:dialog?.workerFault,workerPhase:dialog?.workerPhase},
+        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2),workerFault:dialog?.workerFault,workerPhase:dialog?.workerPhase,point:dialog?.pointEvidence},
         nativeLink:protocol.nativeLink?.nativeClicked===true,linkOwnerMismatch:protocol.nativeLink?.ownershipMismatch,namedLinks:protocol.nativeLink?.namedCount,ownedLinks:protocol.nativeLink?.ownedCount,linkFault:protocol.nativeLink?.workerFault,linkPhase:protocol.nativeLink?.workerPhase,
         error:shortError(protocol.errors)}:undefined};
   });
@@ -303,8 +303,14 @@ do{
   $phase='point-lookup'
   $x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
   $hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
-  for($depth=0;$hit -and $depth -lt 8;$depth++) {if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
-  if(!$same){throw 'Another UI element covers the owned permission button'}
+  $firstHit=$hit
+  $pointWalker=[Windows.Automation.TreeWalker]::RawViewWalker
+  for($depth=0;$hit -and $depth -lt 8;$depth++) {if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$pointWalker.GetParent($hit)}
+  if(!$same){
+   $nativePoint=New-Object PlannerNative+POINT;$nativePoint.X=$x;$nativePoint.Y=$y
+   $result.pointEvidence=@{selectedControl=$chosen.Current.IsControlElement;hitOwned=($firstHit.Current.ProcessId -eq $owner);hitButton=($firstHit.Current.ControlType -eq [Windows.Automation.ControlType]::Button);sameName=($firstHit.Current.Name -eq $chosen.Current.Name);nativeOwned=([PlannerNative]::Owner([PlannerNative]::GetAncestor([PlannerNative]::WindowFromPoint($nativePoint),2)) -eq $owner)}
+   throw 'Another UI element covers the owned permission button'
+  }
   $phase='native-click'
   [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y);$result.acted=$true
   $phase='dismiss-wait'
@@ -350,10 +356,10 @@ $link=$returnLinks[0];$bounds=$link.Current.BoundingRectangle;$key=$link.GetRunt
 if($bounds.Width -lt 20 -or $bounds.Height -lt 15){throw 'Owned app-return hyperlink has no safe bounds'}
 $x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
 $phase='point-lookup'
-$walker=[Windows.Automation.TreeWalker]::ControlViewWalker
+$walker=[Windows.Automation.TreeWalker]::RawViewWalker
 $hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
 for($depth=0;$hit -and $depth -lt 8;$depth++){if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
-if(!$same){throw 'Another UI element covers the owned app-return hyperlink'}
+if(!$same){$result.pointEvidence=@{selectedControl=$link.Current.IsControlElement;rawAncestorMatched=$false};throw 'Another UI element covers the owned app-return hyperlink'}
 $result.pointMatched=$true;$phase='native-click'
 [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y)
 $result.nativeClicked=$true
