@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js && node test/theme.test.js && node test/goals.test.js && node test/release-assets.test.js && node test/sync-core.test.js && node test/sync-service.test.js && node test/account-service.test.js && node test/reminders.test.js && node test/account-ipc.test.js && node test/account-test-build.test.js && node test/app-return.test.js",
+    "test": "node test/recurrence.test.js && node test/holidays.test.js && node test/quickadd.test.js && node test/store.test.js && node test/main.mock.test.js && node test/updater.test.js && node test/updater-download.test.js && node test/runtime.test.js && node test/theme.test.js && node test/goals.test.js && node test/release-assets.test.js && node test/sync-core.test.js && node test/sync-service.test.js && node test/account-service.test.js && node test/reminders.test.js && node test/account-ipc.test.js && node test/account-test-build.test.js && node test/app-return.test.js && node test/installer-protocol.test.js",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "test:desktop": "node tools/desktop-smoke.cjs",
     "test:package": "node tools/check-package.cjs",
@@ -64,7 +64,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "내 플래너",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "installer/protocol.nsh"
     },
     "publish": [
       {
@@ -72,14 +73,6 @@
         "owner": "psho0324",
         "repo": "-",
         "releaseType": "release"
-      }
-    ],
-    "protocols": [
-      {
-        "name": "내 플래너로 돌아가기",
-        "schemes": [
-          "tteodori-planner"
-        ]
       }
     ]
   },

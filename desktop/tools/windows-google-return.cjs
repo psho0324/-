@@ -45,17 +45,19 @@ function publicSummary(value) {
     const protocol=state?.protocol;
     const dialog=protocol?.confirmation||protocol?.initialPrompt;
     return{mode:attempt.mode,http:attempt.callbackHttpStatus,fresh:attempt.freshCapture,request:attempt.callbackRequestMatched,
-      pkce:attempt.pkceAdvanced,pending:attempt.pendingAfter,nav:attempt.navigationError,clean:attempt.urlCleaned,currentFg:state?.currentProduct?.settled?.foregroundPlanner,
+      pkce:attempt.pkceAdvanced,pending:attempt.pendingAfter,nav:attempt.navigationError,clean:attempt.urlCleaned,currentFg:state?.currentProduct?.settled?.foregroundPlanner,shell:attempt.shellReadyBeforeNavigation,
       protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
-        auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,
+        auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,clickMs:protocol.arrivalAfterClickMs,
+        late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs}:undefined,
         prompt:{matched:dialog?.present,acted:dialog?.acted,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2)},
         error:shortError(protocol.errors)}:undefined};
   });
   return{status:value.status,packaged:value.packaged,runtime:value.runtime,desktop:value.desktop,
     locked:(value.states||[]).slice(0,3).map(state=>({mode:state.mode,baselineFg:state.baseline.settled.foregroundPlanner,candidateFg:state.candidate.settled.foregroundPlanner})),
-    edge:{status:edge.status,version:edge.version,chromiumVersion:edge.chromiumVersion,protocolEnabled:edge.protocolEnabled,modes,error:shortError(edge.errors)},
+    edge:{status:edge.status,version:edge.version,chromiumVersion:edge.chromiumVersion,protocolEnabled:edge.protocolEnabled,
+      association:edge.associationReady?{ready:edge.associationReady.ready,exe:edge.associationReady.executableMatches,profile:edge.associationReady.profileMatches,args:edge.associationReady.argumentsMatch,notified:edge.associationReady.notified,polls:edge.associationReady.polls,ms:edge.associationReady.elapsedMs}:undefined,modes,error:shortError(edge.errors)},
     installedReturnVerified:value.installedReturnVerified===true,
-    cleanup:{protocol:edge.protocolRegistrationCleaned,browser:edge.browserCleanup,temp:value.cleanup==='removed',fixture:value.fixtureExited},
+    cleanup:{protocol:edge.protocolRegistrationCleaned,shell:edge.associationRestored?.ready,browser:edge.browserCleanup,temp:value.cleanup==='removed',fixture:value.fixtureExited},
     error:shortError(value.errors),unexpectedNetworkCalls:value.unexpectedNetworkCalls};
 }
 async function until(fn, label, timeout = 12000) {
@@ -92,6 +94,34 @@ public static class PlannerNative {
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
  [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+ [DllImport("shlwapi.dll", EntryPoint="AssocQueryStringW", CharSet=CharSet.Unicode, ExactSpelling=true)] private static extern int AssocQueryString(uint flags, uint kind, string association, string verb, System.Text.StringBuilder output, ref uint length);
+ [DllImport("shell32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] private static extern IntPtr CommandLineToArgvW(string command, out int count);
+ [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
+ [DllImport("shell32.dll")] private static extern void SHChangeNotify(uint change, uint flags, IntPtr first, IntPtr second);
+ // SHCNE_ASSOCCHANGED with SHCNF_IDLIST and null items refreshes association
+ // metadata after our legitimate CI registration; it changes no focus policy.
+ public static void NotifyAssociations() { SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero); }
+ public static bool[] ShellAssociation(string scheme, string executable, string profile, bool isolated) {
+  // Query Shell resolution, not only HKCU registry contents. Never return the
+  // command: only exact executable/profile/argument readiness leaves native code.
+  bool[] result=new bool[4]; uint length=8192; var command=new System.Text.StringBuilder((int)length);
+  // ASSOCF_IS_PROTOCOL | ASSOCF_NOTRUNCATE, ASSOCSTR_COMMAND.
+  if(AssocQueryString(0x1020,1,scheme,"open",command,ref length)!=0) return result;
+  result[0]=true; int count; IntPtr values=CommandLineToArgvW(command.ToString(),out count);
+  if(values==IntPtr.Zero) return result;
+  try {
+   string[] args=new string[count]; for(int i=0;i<count;i++) args[i]=Marshal.PtrToStringUni(Marshal.ReadIntPtr(values,i*IntPtr.Size));
+   if(count<1) return result;
+   result[1]=String.Equals(System.IO.Path.GetFullPath(args[0]),System.IO.Path.GetFullPath(executable),StringComparison.OrdinalIgnoreCase);
+   if(isolated) {
+    const string prefix="--user-data-dir=";
+    result[2]=count>=2 && args[1].StartsWith(prefix,StringComparison.Ordinal) && String.Equals(System.IO.Path.GetFullPath(args[1].Substring(prefix.Length)),System.IO.Path.GetFullPath(profile),StringComparison.OrdinalIgnoreCase);
+    result[3]=count==3 && args[2]=="%1";
+   } else { result[2]=count==2; result[3]=count==2 && args[1]=="%1"; }
+  } catch { /* An unexpected command remains unready and is never dispatched. */ }
+  finally { LocalFree(values); }
+  return result;
+ }
  public static uint LastInput() { LASTINPUTINFO x = new LASTINPUTINFO(); x.cbSize = (uint)Marshal.SizeOf(x); return GetLastInputInfo(ref x) ? x.dwTime : 0; }
  public static bool Above(IntPtr a, IntPtr b) { if(a==IntPtr.Zero || b==IntPtr.Zero || a==b) return false; IntPtr h=GetWindow(b,3); for(int i=0;i<2048 && h!=IntPtr.Zero;i++,h=GetWindow(h,3)) if(h==a) return true; return false; }
  public static uint Owner(IntPtr h) { uint p=0; if(h!=IntPtr.Zero) GetWindowThreadProcessId(h,out p); return p; }
@@ -100,6 +130,17 @@ public static class PlannerNative {
 }
 `;
 const nativeFile = path.join(owned, 'native.cs'); fs.writeFileSync(nativeFile, nativeCode);
+const associationFile=path.join(owned,'shell-association.ps1');
+fs.writeFileSync(associationFile,String.raw`
+param([string]$Native,[string]$Executable,[string]$Profile,[ValidateSet('owned','prior','removed')][string]$Mode,[switch]$Notify)
+$ErrorActionPreference='Stop'
+if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
+Add-Type -Path $Native
+if($Notify){[PlannerNative]::NotifyAssociations()}
+$state=[PlannerNative]::ShellAssociation('tteodori-planner',$Executable,$Profile,($Mode -eq 'owned'))
+$ready=if($Mode -eq 'removed'){!$state[0]}else{$state[0] -and $state[1] -and $state[2] -and $state[3]}
+@{queried=$state[0];executableMatches=$state[1];profileMatches=$state[2];argumentsMatch=$state[3];ready=$ready;notified=[bool]$Notify} | ConvertTo-Json -Compress
+`);
 const probeFile = path.join(owned, 'probe.ps1');
 fs.writeFileSync(probeFile, String.raw`
 param([string]$Native,[string]$Planner='0',[string]$External='0',[string]$BrowserOwner='0')
@@ -304,6 +345,19 @@ async function foreignLock() {
   if(Object.values(checks).some(passed=>!passed))throw inconclusive('Foreign foreground/input precondition was not stable: '+JSON.stringify(checks));
   return native;
 }
+function shellAssociation(mode,notify=false) {
+  assert(protocolRegistration,'Owned registration must exist before Shell lookup');
+  try {
+    return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',associationFile,'-Native',nativeFile,'-Executable',protocolRegistration.executable,'-Profile',profile,'-Mode',mode,...(notify?['-Notify']:[])],{encoding:'utf8',windowsHide:true,timeout:8000}).trim());
+  } catch { throw inconclusive('Owned Shell association readiness could not be queried'); }
+}
+async function waitShellAssociation(mode) {
+  const started=Date.now();let checks=1;
+  let state=shellAssociation(mode,true);
+  const end=started+12000;
+  while(!state.ready&&Date.now()<end){await pause(150);state=shellAssociation(mode);checks++}
+  return{...state,notified:true,polls:checks,elapsedMs:Date.now()-started};
+}
 async function registerOwnedProtocol() {
   const scheme='tteodori-planner';
   // The public protocol must never dispatch to a default-profile source app.
@@ -325,23 +379,40 @@ async function registerOwnedProtocol() {
     const appRequire=process.getBuiltinModule('module').createRequire(process.getBuiltinModule('path').join(app.getAppPath(),'package.json'));
     const {classifyAppLaunch}=appRequire('./app-return.js');
     globalThis.__returnDiagnostic.protocolRequests=0;
-    app.on('second-instance',(_event,argv)=>{if(classifyAppLaunch(argv)==='return')globalThis.__returnDiagnostic.protocolRequests++});
+    globalThis.__returnDiagnostic.protocolEventTimes=[];
+    app.on('second-instance',(_event,argv)=>{
+      if(classifyAppLaunch(argv)==='return'){
+        globalThis.__returnDiagnostic.protocolRequests++;
+        globalThis.__returnDiagnostic.protocolEventTimes.push(Date.now());
+      }
+    });
     const registered=app.setAsDefaultProtocolClient(scheme,executable,args);
     return{scheme,executable,args,registered,priorOwn,matches:app.isDefaultProtocolClient(scheme,executable,args)};
   },{scheme,profile,priorOwn});
   if(!protocolRegistration.registered||!protocolRegistration.matches)throw inconclusive('Owned application protocol registration was not confirmed');
+  report.edge.associationReady=await waitShellAssociation('owned');
+  if(!report.edge.associationReady.ready)throw inconclusive('Shell did not resolve the exact owned executable and isolated profile; no protocol dispatch allowed');
 }
 function protocolDialog(handle,owner,action,wait=1500) {
   return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',edgeDialogFile,'-Native',nativeFile,'-Window',handle,'-ExpectedOwner',String(owner),'-Action',action,'-WaitMilliseconds',String(wait)],{encoding:'utf8',windowsHide:true,timeout:10000}).trim());
 }
-async function protocolObservation(browserPage,handle,owner) {
-  const requests=()=>running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests);
-  const result={status:'running',ownedRegistration:true,automaticRequests:await requests()};
+async function protocolObservation(browserPage,handle,owner,baseline,attemptStartedAt) {
+  const requests=async()=>{
+    const count=await bounded(running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests),1500,null);
+    if(!Number.isSafeInteger(count))throw inconclusive('Owned app-return counter was unavailable');
+    return count;
+  };
+  const eventTime=async index=>{
+    const at=await bounded(running.evaluate((_electron,index)=>globalThis.__returnDiagnostic.protocolEventTimes[index]??null,index),1500,null);
+    if(!Number.isSafeInteger(at))throw inconclusive('Owned app-return event timing was unavailable');
+    return at;
+  };
+  const result={status:'running',ownedRegistration:true,eventBaseline:baseline,automaticRequests:(await requests())-baseline};
   try{
     // The current callback may already have triggered a browser permission
     // prompt. Decline it in this synthetic run before testing the visible link.
     result.initialPrompt=protocolDialog(handle,owner,'cancel');
-    result.automaticRequests=await requests();
+    result.automaticRequests=(await requests())-baseline;
     if(result.automaticRequests>0){
       result.path='automatic application handoff';
     }else{
@@ -352,19 +423,42 @@ async function protocolObservation(browserPage,handle,owner) {
         await browserPage.bringToFront();
         const before=probe(plannerHandle,handle);
         if(!before.externalForeground||before.externalPid!==owner)throw inconclusive('Owned Edge frame was not foreground for the explicit link click');
+        result.shellReadyBeforeClick=shellAssociation('owned').ready;
+        if(!result.shellReadyBeforeClick)throw inconclusive('Shell no longer resolves the owned isolated profile; explicit dispatch refused');
         const beforeRequests=await requests();
+        const clickStartedAt=Date.now();
         try{await link.click({timeout:4000,noWaitAfter:true})}
         catch{if(!browserPage.isClosed()||await requests()<=beforeRequests)throw inconclusive('Explicit application-return link did not complete its browser click')}
         if(!browserPage.isClosed())result.confirmation=protocolDialog(handle,owner,'accept',6000);
-        await until(async()=>await requests()>beforeRequests,'Application-return handoff did not reach the existing isolated instance',6000);
+        const waitStartedAt=Date.now();
+        try {
+          await until(async()=>await requests()>beforeRequests,'Application-return handoff did not reach the existing isolated instance',6000);
+        } catch(error) {
+          if(!error.inconclusive)throw error;
+          // Evidence only: do not retry the click or let a late event count as
+          // success in another mode. Stop this Edge sequence after observation.
+          const passiveStartedAt=Date.now();let count=await requests();
+          while(count<=beforeRequests&&Date.now()-passiveStartedAt<12000){await pause(100);count=await requests()}
+          const receivedAt=count>beforeRequests?await eventTime(beforeRequests):null;
+          result.passiveObservation={initialWindowMs:passiveStartedAt-waitStartedAt,passiveMs:Date.now()-passiveStartedAt,lateArrived:receivedAt!==null,countBefore:beforeRequests,countAfter:count,
+            arrivalAfterClickMs:receivedAt===null?null:Math.max(0,receivedAt-clickStartedAt),arrivalAfterWaitMs:receivedAt===null?null:Math.max(0,receivedAt-waitStartedAt)};
+          if(receivedAt!==null){result.lateSettled=observation(probe(plannerHandle,handle));result.lateSingleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1)}
+          throw inconclusive(receivedAt===null?'No app-return event in the initial gate or passive observation; remaining modes stopped':'App-return arrived after the initial gate; latency recorded and remaining modes stopped');
+        }
+        const receivedAt=await eventTime(beforeRequests);
+        result.arrivalAfterClickMs=receivedAt===null?null:Math.max(0,receivedAt-clickStartedAt);
         result.explicitRequests=(await requests())-beforeRequests;result.path='explicit browser link and unmodified browser confirmation policy';
       }catch(error){
-        if(browserPage.isClosed()&&await requests()>0)result.path='application handoff completed while the browser return link was being inspected';
+        if(result.passiveObservation)throw error;
+        if(browserPage.isClosed()&&await requests()>baseline)result.path='application handoff completed while the browser return link was being inspected';
         else throw error.inconclusive?error:inconclusive('Owned browser return-link inspection did not complete');
       }
     }
     await pause(350);result.settled=observation(probe(plannerHandle,handle));
     result.callbackClosed=browserPage.isClosed();result.totalRequests=await requests();
+    assert.equal(result.totalRequests-baseline,1,'An attempt received more than one app-return event');
+    const receivedAt=await eventTime(baseline);
+    result.arrivalAfterAttemptMs=receivedAt===null?null:Math.max(0,receivedAt-attemptStartedAt);
     result.singleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1);
     assert(result.singleWindow,'Application handoff created another window');
     result.status='conclusive-observation';
@@ -456,7 +550,14 @@ async function edgeObservation() {
       const checks={edgeForeground:input.foreground&&before.externalForeground,edgeOwnerMatches:input.ownerMatches&&before.externalPid===browserMainPid,plannerOwnerMatches:before.plannerPid===plannerPid,edgeNotTopmost:!before.externalTopmost,inputUnchanged:before.lastInput===input.lastInput};
       if(Object.values(checks).some(passed=>!passed))throw inconclusive('Edge foreground precondition unstable: '+JSON.stringify(checks));
       const calls=await tokenCalls();
-      if(protocolEnabled)await running.evaluate(()=>{globalThis.__returnDiagnostic.protocolRequests=0});
+      const protocolBaseline=protocolEnabled?await running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests):0;
+      if(protocolEnabled){
+        const completed=edge.states.filter(state=>state.protocol?.status==='conclusive-observation').length;
+        if(protocolBaseline!==completed)throw inconclusive('An unattributed app-return event arrived between modes; dispatch refused');
+        attempt.shellReadyBeforeNavigation=shellAssociation('owned').ready;
+        if(!attempt.shellReadyBeforeNavigation)throw inconclusive('Shell no longer resolves the owned isolated profile; automatic dispatch refused');
+      }
+      const protocolAttemptStartedAt=Date.now();
       try{
         const response=await browserPage.goto(callback.href,{waitUntil:'domcontentloaded',timeout:12000});
         if(response){attempt.callbackHttpStatus=response.status();attempt.callbackHttpRejected=response.status()>=400}
@@ -485,7 +586,7 @@ async function edgeObservation() {
       attempt.urlCleaned=queryRemoved;
       if(attempt.navigationError){
         const permittedAbort=['ERR_ABORTED','ERR_UNKNOWN_URL_SCHEME','TARGET_CLOSED','NAVIGATION_TIMEOUT'].includes(attempt.navigationError);
-        const handoff=browserPage.isClosed()&&protocolEnabled&&(await running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests))>0;
+        const handoff=browserPage.isClosed()&&protocolEnabled&&(await running.evaluate(()=>globalThis.__returnDiagnostic.protocolRequests))>protocolBaseline;
         const currentSuccess=attempt.freshCapture&&attempt.callbackRequestMatched&&attempt.callbackHttpStatus===200&&attempt.pkceAdvanced&&attempt.authenticated&&!attempt.pendingAfter;
         attempt.navigationAbortValidated=permittedAbort&&currentSuccess&&((attempt.completionDom&&queryRemoved)||handoff);
         if(!attempt.navigationAbortValidated)throw inconclusive('Edge navigation interruption lacked a validated completed login');
@@ -497,7 +598,10 @@ async function edgeObservation() {
       edge.states.push(state);
       if(baseline.lastInput!==before.lastInput||candidate.lastInput!==before.lastInput)throw inconclusive('Native input changed during Edge callback observation');
       assert.equal(candidate.plannerTopmost,false,'Candidate left product permanently topmost');
-      if(protocolEnabled)state.protocol=await protocolObservation(browserPage,frame.externalHandle,browserMainPid);
+      if(protocolEnabled){
+        state.protocol=await protocolObservation(browserPage,frame.externalHandle,browserMainPid,protocolBaseline,protocolAttemptStartedAt);
+        if(state.protocol.status!=='conclusive-observation')throw inconclusive('An app-return observation was inconclusive; stopped before another mode could consume a late event');
+      }
       if(!browserPage.isClosed())await browserPage.close();
     }
     edge.nativeStatus='conclusive-observation';
@@ -524,6 +628,8 @@ async function edgeObservation() {
         },protocolRegistration).catch(()=>false),6000,false);
         edge.protocolRegistrationCleanup=protocolRegistration.priorOwn?'restored the exact prior owned installer registration':'removed the temporary owned registration';
         if(!edge.protocolRegistrationCleaned)throw Error('Owned protocol registration cleanup was not confirmed');
+        edge.associationRestored=await waitShellAssociation(protocolRegistration.priorOwn?'prior':'removed');
+        if(!edge.associationRestored.ready)throw Error('Shell association cleanup was not confirmed');
       }catch{edge.errors.push({message:'Owned protocol registration cleanup failed'});process.exitCode=1}
       protocolRegistration=null;
     }

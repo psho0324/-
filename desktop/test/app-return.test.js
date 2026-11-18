@@ -26,5 +26,4 @@ assert.equal(classifyAppLaunch(['C:\\Program Files\\MyPlanner.exe', '--hidden'])
 assert.equal(classifyAppLaunch(['/test/electron', '/test/desktop', '--user-data-dir=/test/profile']), 'ordinary');
 assert.equal(classifyAppLaunch(null), 'ignore');
 assert(pkg.build.files.includes('app-return.js'), 'The installed app needs its protocol validator');
-assert(pkg.build.protocols.some(protocol => protocol.schemes.includes(APP_RETURN_SCHEME)), 'NSIS must register the exact app-open scheme');
-console.log('PASS app-open protocol: fixed link, malformed/credential/foreign/duplicate rejection, ordinary launches and packaged registration');
+console.log('PASS app-open protocol: fixed link, malformed/credential/foreign/duplicate rejection, ordinary launches and packaged validator');

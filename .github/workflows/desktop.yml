@@ -82,6 +82,8 @@ jobs:
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed: $($installer.ExitCode)" }
           $env:PLANNER_EXECUTABLE = Join-Path $installDir 'MyPlanner.exe'
           $env:PLANNER_SMOKE_LABEL = 'installed'
+          node tools/check-installed-protocol.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:desktop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Diagnose installed Windows login return in isolated Edge
