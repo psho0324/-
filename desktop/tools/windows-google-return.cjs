@@ -727,12 +727,12 @@ async function edgeObservation() {
         if(!attempt.navigationAbortValidated)throw inconclusive('Edge navigation interruption lacked a validated completed login');
       }
       if(!queryRemoved)throw inconclusive('Edge callback did not remove authentication URL parameters');
-      await running.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];if(w.isMinimized())w.restore();w.show();w.focus();w.moveTop()});
-      await pause(350);const candidate=probe(plannerHandle,frame.externalHandle);
-      const state={mode,precondition:checks,historyReady,callbackClosed:closed,authenticationUrlRemoved:queryRemoved,currentProduct:{settled:observation(baseline),inputUnchanged:baseline.lastInput===before.lastInput},directCandidate:{operations:'restore/show/focus/moveTop after the real Edge navigation; no product patch',settled:observation(candidate),inputUnchanged:candidate.lastInput===before.lastInput}};
+      // Do not alter the product window between its callback and the real
+      // browser handoff. The separate foreign-lock phase measures moveTop.
+      const state={mode,precondition:checks,historyReady,callbackClosed:closed,authenticationUrlRemoved:queryRemoved,currentProduct:{settled:observation(baseline),inputUnchanged:baseline.lastInput===before.lastInput}};
       edge.states.push(state);
-      if(baseline.lastInput!==before.lastInput||candidate.lastInput!==before.lastInput)throw inconclusive('Native input changed during Edge callback observation');
-      assert.equal(candidate.plannerTopmost,false,'Candidate left product permanently topmost');
+      if(baseline.lastInput!==before.lastInput)throw inconclusive('Native input changed during Edge callback observation');
+      assert.equal(baseline.plannerTopmost,false,'Product left permanently topmost before browser handoff');
       if(protocolEnabled){
         state.protocol=await protocolObservation(browserPage,frame.externalHandle,browserMainPid,protocolBaseline,protocolAttemptStartedAt);
         if(state.protocol.status!=='conclusive-observation')throw inconclusive('An app-return observation was inconclusive; stopped before another mode could consume a late event');
