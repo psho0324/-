@@ -49,13 +49,15 @@ function publicSummary(value) {
       protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
         auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,clickMs:protocol.arrivalAfterClickMs,
         late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs}:undefined,
-        prompt:{matched:dialog?.present,acted:dialog?.acted,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2)},
+        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2)},
+        nativeLink:protocol.nativeLink?.nativeClicked===true,linkOwnerMismatch:protocol.nativeLink?.ownershipMismatch,namedLinks:protocol.nativeLink?.namedCount,ownedLinks:protocol.nativeLink?.ownedCount,
         error:shortError(protocol.errors)}:undefined};
   });
   return{status:value.status,packaged:value.packaged,runtime:value.runtime,desktop:value.desktop,
     locked:(value.states||[]).slice(0,3).map(state=>({mode:state.mode,baselineFg:state.baseline.settled.foregroundPlanner,candidateFg:state.candidate.settled.foregroundPlanner})),
     edge:{status:edge.status,version:edge.version,chromiumVersion:edge.chromiumVersion,protocolEnabled:edge.protocolEnabled,
-      association:edge.associationReady?{ready:edge.associationReady.ready,exe:edge.associationReady.executableMatches,profile:edge.associationReady.profileMatches,args:edge.associationReady.argumentsMatch,notified:edge.associationReady.notified,polls:edge.associationReady.polls,ms:edge.associationReady.elapsedMs}:undefined,modes,error:shortError(edge.errors)},
+      association:edge.associationReady?{ready:edge.associationReady.ready,exe:edge.associationReady.executableMatches,profile:edge.associationReady.profileMatches,args:edge.associationReady.argumentsMatch,notified:edge.associationReady.notified,polls:edge.associationReady.polls,ms:edge.associationReady.elapsedMs}:undefined,
+      instances:edge.secondInstances?{total:edge.secondInstances.total,counts:edge.secondInstances.counts,samples:edge.secondInstances.samples?.slice(0,3)}:undefined,modes,error:shortError(edge.errors)},
     installedReturnVerified:value.installedReturnVerified===true,
     cleanup:{protocol:edge.protocolRegistrationCleaned,shell:edge.associationRestored?.ready,browser:edge.browserCleanup,temp:value.cleanup==='removed',fixture:value.fixtureExited},
     error:shortError(value.errors),unexpectedNetworkCalls:value.unexpectedNetworkCalls};
@@ -126,6 +128,19 @@ public static class PlannerNative {
  public static bool Above(IntPtr a, IntPtr b) { if(a==IntPtr.Zero || b==IntPtr.Zero || a==b) return false; IntPtr h=GetWindow(b,3); for(int i=0;i<2048 && h!=IntPtr.Zero;i++,h=GetWindow(h,3)) if(h==a) return true; return false; }
  public static uint Owner(IntPtr h) { uint p=0; if(h!=IntPtr.Zero) GetWindowThreadProcessId(h,out p); return p; }
  public static bool BrowserFrame(IntPtr h) { var name=new System.Text.StringBuilder(128); GetClassName(h,name,name.Capacity); return name.ToString()=="Chrome_WidgetWin_1"; }
+ public static void ClickOwnedPoint(IntPtr frame, uint owner, int x, int y) {
+  RECT bounds; POINT previous;
+  if(Owner(frame)!=owner || !BrowserFrame(frame) || !IsWindowVisible(frame) || Owner(GetForegroundWindow())!=owner || !GetWindowRect(frame,out bounds) || x<=bounds.Left || x>=bounds.Right || y<=bounds.Top || y>=bounds.Bottom || !GetCursorPos(out previous)) throw new InvalidOperationException("Owned foreground click precondition failed");
+  POINT point=new POINT(); point.X=x;point.Y=y;
+  IntPtr hit=GetAncestor(WindowFromPoint(point),2);
+  if(Owner(hit)!=owner || !BrowserFrame(hit)) throw new InvalidOperationException("Another window covers the owned click target");
+  bool down=false;
+  try {
+   if(!SetCursorPos(x,y) || Owner(GetForegroundWindow())!=owner || Owner(GetAncestor(WindowFromPoint(point),2))!=owner) throw new InvalidOperationException("Owned click target changed before input");
+   mouse_event(2,0,0,0,UIntPtr.Zero);down=true;mouse_event(4,0,0,0,UIntPtr.Zero);down=false;
+   System.Threading.Thread.Sleep(60);
+  } finally { if(down) mouse_event(4,0,0,0,UIntPtr.Zero); SetCursorPos(previous.X,previous.Y); }
+ }
  public static IntPtr BrowserWindow(uint process) { IntPtr found=IntPtr.Zero; EnumWindows(delegate(IntPtr h,IntPtr l) { if(Owner(h)==process && IsWindowVisible(h) && BrowserFrame(h)) {found=h;return false;} return true; },IntPtr.Zero); return found; }
 }
 `;
@@ -206,7 +221,7 @@ Add-Type -AssemblyName UIAutomationTypes
 $target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
 if($target -eq [IntPtr]::Zero -or [PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing dialog input outside the owned browser'}
 $end=[DateTime]::UtcNow.AddMilliseconds([Math]::Min(6000,[Math]::Max(0,$WaitMilliseconds)))
-$result=@{present=$false;acted=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
+$result=@{present=$false;acted=$false;dismissed=$false;absenceConfirmed=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
 $knownApps=@('my-planner','myplanner','electron','내 플래너')
 $walker=[Windows.Automation.TreeWalker]::ControlViewWalker
 do{
@@ -256,12 +271,51 @@ do{
  if($permission){
   $result.present=$true
   $chosen=if($Action -eq 'accept'){$permission.open}else{$permission.cancel}
-  $invoke=$chosen.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
-  $invoke.Invoke();$result.acted=$true;break
+  if($chosen.Current.IsOffscreen){throw 'Owned permission button is not visible'}
+  $key=$chosen.GetRuntimeId() -join ':';$bounds=$chosen.Current.BoundingRectangle
+  if($bounds.Width -lt 10 -or $bounds.Height -lt 10){throw 'Owned permission button has no safe bounds'}
+  $x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
+  $hit=[Windows.Automation.AutomationElement]::FromPoint((New-Object Windows.Point($x,$y)));$same=$false
+  for($depth=0;$hit -and $depth -lt 8;$depth++) {if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
+  if(!$same){throw 'Another UI element covers the owned permission button'}
+  [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y);$result.acted=$true
+  $dismissUntil=[DateTime]::UtcNow.AddMilliseconds(2000)
+  do{
+   $fresh=[Windows.Automation.AutomationElement]::FromHandle($target);$stillPresent=$false
+   foreach($candidate in $fresh.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)) {if(($candidate.GetRuntimeId() -join ':') -eq $key){$stillPresent=$true;break}}
+   if(!$stillPresent){$result.dismissed=$true;break};Start-Sleep -Milliseconds 80
+  }while([DateTime]::UtcNow -lt $dismissUntil)
+  break
  }
  Start-Sleep -Milliseconds 100
 }while([DateTime]::UtcNow -lt $end)
+if(!$result.present -and $result.knownButtons.Count -eq 0){$result.absenceConfirmed=$true}
 $result | ConvertTo-Json -Compress
+`);
+const edgeLinkFile=path.join(owned,'edge-return-link.ps1');
+fs.writeFileSync(edgeLinkFile,'\ufeff'+String.raw`
+param([string]$Native,[string]$Window,[string]$ExpectedOwner)
+$ErrorActionPreference='Stop'
+if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
+Add-Type -Path $Native
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
+if([PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing link input outside the owned browser'}
+$root=[Windows.Automation.AutomationElement]::FromHandle($target)
+$condition=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Hyperlink)
+$namedLinks=@($root.FindAll([Windows.Automation.TreeScope]::Descendants,$condition) | Where-Object {$_.Current.Name -eq '플래너로 돌아가기' -and $_.Current.IsEnabled -and !$_.Current.IsOffscreen})
+$returnLinks=@($namedLinks | Where-Object {$_.Current.ProcessId -eq $owner})
+if($returnLinks.Count -ne 1){@{matched=$false;nativeClicked=$false;namedCount=$namedLinks.Count;ownedCount=$returnLinks.Count;ownershipMismatch=($namedLinks.Count -gt $returnLinks.Count)} | ConvertTo-Json -Compress;exit}
+$link=$returnLinks[0];$bounds=$link.Current.BoundingRectangle;$key=$link.GetRuntimeId() -join ':'
+if($bounds.Width -lt 20 -or $bounds.Height -lt 15){throw 'Owned app-return hyperlink has no safe bounds'}
+$x=[int][Math]::Floor($bounds.X+$bounds.Width/2);$y=[int][Math]::Floor($bounds.Y+$bounds.Height/2)
+$walker=[Windows.Automation.TreeWalker]::ControlViewWalker
+$hit=[Windows.Automation.AutomationElement]::FromPoint((New-Object Windows.Point($x,$y)));$same=$false
+for($depth=0;$hit -and $depth -lt 8;$depth++){if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
+if(!$same){throw 'Another UI element covers the owned app-return hyperlink'}
+[PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y)
+@{matched=$true;nativeClicked=$true;pointMatched=$true} | ConvertTo-Json -Compress
 `);
 const formFile = path.join(owned, 'foreign-window.ps1');
 fs.writeFileSync(formFile, String.raw`
@@ -377,11 +431,20 @@ async function registerOwnedProtocol() {
     // require is not a normal global in the inspector evaluation context.
     // Load only the validated installed app's own protocol classifier.
     const appRequire=process.getBuiltinModule('module').createRequire(process.getBuiltinModule('path').join(app.getAppPath(),'package.json'));
-    const {classifyAppLaunch}=appRequire('./app-return.js');
+    const {classifyAppLaunch,isAppReturnUrl}=appRequire('./app-return.js');
     globalThis.__returnDiagnostic.protocolRequests=0;
     globalThis.__returnDiagnostic.protocolEventTimes=[];
+    globalThis.__returnDiagnostic.secondInstanceTotal=0;
+    globalThis.__returnDiagnostic.secondInstanceCounts={return:0,ordinary:0,ignore:0};
+    globalThis.__returnDiagnostic.secondInstanceSamples=[];
     app.on('second-instance',(_event,argv)=>{
-      if(classifyAppLaunch(argv)==='return'){
+      const classified=classifyAppLaunch(argv),kind=['return','ordinary','ignore'].includes(classified)?classified:'ignore';
+      const values=Array.isArray(argv)?argv:[];
+      const uriCount=values.filter(value=>typeof value==='string'&&/^[a-z][a-z0-9+.-]*:/i.test(value)&&!/^[a-z]:[\\/]/i.test(value)).length;
+      globalThis.__returnDiagnostic.secondInstanceTotal++;
+      globalThis.__returnDiagnostic.secondInstanceCounts[kind]++;
+      if(globalThis.__returnDiagnostic.secondInstanceSamples.length<12)globalThis.__returnDiagnostic.secondInstanceSamples.push({kind,fixedLink:values.some(isAppReturnUrl),uriCount});
+      if(kind==='return'){
         globalThis.__returnDiagnostic.protocolRequests++;
         globalThis.__returnDiagnostic.protocolEventTimes.push(Date.now());
       }
@@ -395,6 +458,9 @@ async function registerOwnedProtocol() {
 }
 function protocolDialog(handle,owner,action,wait=1500) {
   return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',edgeDialogFile,'-Native',nativeFile,'-Window',handle,'-ExpectedOwner',String(owner),'-Action',action,'-WaitMilliseconds',String(wait)],{encoding:'utf8',windowsHide:true,timeout:10000}).trim());
+}
+function nativeReturnLink(handle,owner) {
+  return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',edgeLinkFile,'-Native',nativeFile,'-Window',handle,'-ExpectedOwner',String(owner)],{encoding:'utf8',windowsHide:true,timeout:10000}).trim());
 }
 async function protocolObservation(browserPage,handle,owner,baseline,attemptStartedAt) {
   const requests=async()=>{
@@ -416,6 +482,7 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
     if(result.automaticRequests>0){
       result.path='automatic application handoff';
     }else{
+      if(result.initialPrompt.present?(!result.initialPrompt.acted||!result.initialPrompt.dismissed):!result.initialPrompt.absenceConfirmed)throw inconclusive('Initial app-open prompt dismissal was not confirmed; manual link click refused');
       if(browserPage.isClosed())throw inconclusive('Completion tab closed before the explicit application-return button could be tested');
       try{
         const link=browserPage.locator('#open-planner');
@@ -427,9 +494,10 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
         if(!result.shellReadyBeforeClick)throw inconclusive('Shell no longer resolves the owned isolated profile; explicit dispatch refused');
         const beforeRequests=await requests();
         const clickStartedAt=Date.now();
-        try{await link.click({timeout:4000,noWaitAfter:true})}
+        try{result.nativeLink=nativeReturnLink(handle,owner);if(!result.nativeLink.nativeClicked)throw inconclusive('Native app-return hyperlink was not clicked')}
         catch{if(!browserPage.isClosed()||await requests()<=beforeRequests)throw inconclusive('Explicit application-return link did not complete its browser click')}
         if(!browserPage.isClosed())result.confirmation=protocolDialog(handle,owner,'accept',6000);
+        if(result.confirmation&&(!result.confirmation.acted||!result.confirmation.dismissed))throw inconclusive('Native app-open confirmation did not dismiss after its click');
         const waitStartedAt=Date.now();
         try {
           await until(async()=>await requests()>beforeRequests,'Application-return handoff did not reach the existing isolated instance',6000);
@@ -611,6 +679,9 @@ async function edgeObservation() {
     // This diagnostic must not label a missing/unusable Edge as a product pass.
     if(!error.inconclusive)process.exitCode=1;
   }finally{
+    if(protocolRegistration){
+      edge.secondInstances=await bounded(running.evaluate(()=>({total:globalThis.__returnDiagnostic.secondInstanceTotal,counts:globalThis.__returnDiagnostic.secondInstanceCounts,samples:globalThis.__returnDiagnostic.secondInstanceSamples})).catch(()=>null),1500,null);
+    }
     try{
       const finalCalls=await bounded(tokenCalls().catch(()=>null),6000,null);
       if(finalCalls===null)throw Error('Synthetic app transport counters unavailable');
