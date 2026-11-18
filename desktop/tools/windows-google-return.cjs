@@ -140,7 +140,7 @@ function callbackRequest(url) {
 function observation(s) {
   return {foregroundPlanner:s.plannerForeground,foregroundExternal:s.externalForeground,visible:s.plannerVisible,minimized:s.plannerMinimized,aboveExternal:s.plannerAboveExternal,topmost:s.plannerTopmost,lastInput:s.lastInput};
 }
-let plannerHandle,externalHandle;
+let plannerHandle,plannerPid,externalHandle;
 async function plannerState(mode) {
   await running.evaluate(({BrowserWindow},mode)=>{const w=BrowserWindow.getAllWindows()[0];if(w.isMinimized())w.restore();w.show();if(mode==='hidden')w.hide();if(mode==='minimized')w.minimize()},mode);
 }
@@ -148,7 +148,9 @@ async function foreignLock() {
   const state=await command('lock');
   if(!state.foreground||!state.locked)throw inconclusive('Foreign fixture could not establish and lock native foreground');
   const native=probe(plannerHandle,externalHandle);
-  if(!native.externalForeground||native.externalPid!==fixturePid||native.plannerPid!==running.process().pid||native.externalTopmost||native.lastInput!==state.lastInput)throw inconclusive('Foreign foreground/input precondition was not stable');
+  const checks={externalForeground:native.externalForeground,externalOwnerMatches:native.externalPid===fixturePid,plannerOwnerMatches:native.plannerPid===plannerPid,externalNotTopmost:!native.externalTopmost,inputUnchanged:native.lastInput===state.lastInput};
+  report.preconditions??=[];report.preconditions.push(checks);
+  if(Object.values(checks).some(passed=>!passed))throw inconclusive('Foreign foreground/input precondition was not stable: '+JSON.stringify(checks));
   return native;
 }
 (async()=>{
@@ -157,6 +159,9 @@ async function foreignLock() {
   running=await _electron.launch({executablePath:executable,cwd:root,args:[...(packaged?[]:['.']),'--user-data-dir='+profile],env:{...process.env,CI:'true',PLANNER_DISABLE_AUTO_UPDATE:'1'},timeout:30000});
   const actual=await running.evaluate(({app})=>app.getPath('userData'));
   assert.equal(path.resolve(actual).toLowerCase(),path.resolve(profile).toLowerCase(),'Refusing to touch a non-owned app profile');
+  // Playwright launches Electron through cmd.exe on Windows. Its child-process
+  // PID can belong to that wrapper; the HWND owner must match Electron itself.
+  plannerPid=await running.evaluate(()=>process.pid);
   page=await running.firstWindow();await page.waitForFunction(()=>window.storage&&window.plannerAccount&&document.querySelector('#homeBody')?.children.length);
   const initial=await page.evaluate(()=>window.storage.load());assert.equal(initial.todos.length,0);assert.equal(initial.events.length,0);
   plannerHandle=await running.evaluate(({BrowserWindow})=>{const b=BrowserWindow.getAllWindows()[0].getNativeWindowHandle();return (b.length===8?b.readBigUInt64LE():BigInt(b.readUInt32LE())).toString()});
