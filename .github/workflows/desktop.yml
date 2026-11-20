@@ -1,6 +1,12 @@
 name: Build Windows planner
 on:
   workflow_dispatch:
+    inputs:
+      login_return_diagnostics:
+        description: 'Run isolated Windows and Edge login-return diagnostics'
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [main, 'fix/**']
     tags: ['v*']
@@ -10,8 +16,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: desktop-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/windows-google-return' }}
+  group: desktop-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.login_return_diagnostics && 'login-return' || 'build' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && inputs.login_return_diagnostics }}
 jobs:
   sync-database:
     runs-on: ubuntu-24.04
@@ -66,7 +72,7 @@ jobs:
       - name: Run original tests and updater safety tests
         run: npm test
       - name: Diagnose Windows login return with isolated native windows
-        if: github.ref == 'refs/heads/fix/windows-google-return'
+        if: github.event_name == 'workflow_dispatch' && inputs.login_return_diagnostics
         run: node tools/windows-google-return.cjs
       - name: Launch actual Electron and verify desktop saving
         run: npm run test:desktop
@@ -87,7 +93,7 @@ jobs:
           npm run test:desktop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Diagnose installed Windows login return in isolated Edge
-        if: github.ref == 'refs/heads/fix/windows-google-return'
+        if: github.event_name == 'workflow_dispatch' && inputs.login_return_diagnostics
         shell: pwsh
         run: |
           $env:PLANNER_EXECUTABLE = Join-Path $env:RUNNER_TEMP 'my-planner-installed/MyPlanner.exe'
@@ -136,6 +142,12 @@ jobs:
             Write-Output "::error title=Installed update verification::$diagnostic"
             throw
           }
+      - name: Verify app-open registration after update and uninstall
+        shell: pwsh
+        run: |
+          $env:PLANNER_EXECUTABLE = Join-Path $env:RUNNER_TEMP 'my-planner-installed/MyPlanner.exe'
+          node tools/check-protocol-lifecycle.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create installer checksum
         shell: pwsh
         run: |
@@ -154,7 +166,7 @@ jobs:
             desktop/dist/MyPlanner-Setup.exe.blockmap
             desktop/test-results/**
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: [windows, renderer, sync-database]
     runs-on: ubuntu-24.04
     permissions:

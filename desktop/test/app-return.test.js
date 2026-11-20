@@ -5,6 +5,8 @@ const pkg = require('../package.json');
 for (const valid of [APP_RETURN_URL, APP_RETURN_URL + '/']) {
   assert.equal(isAppReturnUrl(valid), true);
   assert.equal(classifyAppLaunch(['C:\\Program Files\\MyPlanner.exe', valid]), 'return');
+  assert.equal(classifyAppLaunch(['C:\\Program Files\\MyPlanner.exe', '--', valid]), 'return');
+  assert.equal(classifyAppLaunch(['MyPlanner.exe', '--user-data-dir=C:\\CI Profile', '--', valid]), 'return');
 }
 const invalid = [
   null, undefined, {}, 1, '', ' ' + APP_RETURN_URL, APP_RETURN_URL + ' ',
@@ -19,6 +21,7 @@ const invalid = [
 for (const value of invalid) assert.equal(isAppReturnUrl(value), false, 'Only the static app-open URL is allowed');
 for (const value of invalid.filter(value => typeof value === 'string' && /^[a-z][a-z0-9+.-]*:/i.test(value))) {
   assert.equal(classifyAppLaunch(['MyPlanner.exe', value]), 'ignore');
+  assert.equal(classifyAppLaunch(['MyPlanner.exe', '--', value]), 'ignore');
 }
 assert.equal(classifyAppLaunch(['MyPlanner.exe', APP_RETURN_URL, APP_RETURN_URL]), 'ignore');
 assert.equal(classifyAppLaunch(['MyPlanner.exe', APP_RETURN_URL, 'https://example.invalid/']), 'ignore');

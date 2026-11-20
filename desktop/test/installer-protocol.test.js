@@ -17,6 +17,7 @@ assert.match(install, /WriteRegStr SHCTX[^\r\n]+"URL Protocol" ""/);
 assert.match(install, /WriteRegStr SHCTX[^\r\n]+\\DefaultIcon/);
 assert.match(install, /WriteRegStr SHCTX[^\r\n]+\\shell\\open\\command/);
 assert(include.includes('$INSTDIR\\${APP_EXECUTABLE_FILENAME}'), 'Use the installed executable in installer and uninstaller passes');
+assert(include.includes('-- $\\"%1$\\"'), 'Terminate switch parsing before the external URL argument');
 assert(!include.includes('$appExe') && !include.includes('$EXEDIR'), 'The uninstaller has no appExe variable and can run from a temporary copy');
 assert(!/\bSetRegView\b|\bSetShellVarContext\b/.test(include), 'The template owns installation scope and registry view');
 assert.match(uninstall, /Push \$0[\s\S]*Push \$1[\s\S]*ReadRegStr \$0 SHCTX/);
@@ -25,12 +26,15 @@ for (const body of [install, uninstall]) assert.match(body, /SHChangeNotify\(i 0
 assert(!pkg.build.files.some(file => file === '**/*' || file.startsWith('installer/')), 'Installer hook must stay outside packaged runtime files');
 
 const executable = 'C:\\Program Files\\MyPlanner\\MyPlanner.exe';
-const own = { exists: true, markerExists: true, marker: '', command: `"${executable}" "%1"`, icon: `"${executable}",0`, notRunning: true };
+const own = { exists: true, markerExists: true, marker: '', command: `"${executable}" -- "%1"`, icon: `"${executable}",0`, notRunning: true };
 assert(Object.values(inspectRegistration(own, executable)).every(Boolean));
 assert(Object.values(inspectRegistration({ ...own, command: own.command.toUpperCase(), icon: own.icon.toUpperCase() }, executable)).every(Boolean));
 for (const changed of [
   { exists: false }, { markerExists: false }, { marker: null }, { marker: 0 },
   { command: `"C:\\Other\\MyPlanner.exe" "%1"` },
+  { command: `"${executable}" "%1"` },
+  { command: `"${executable}" "%1" --` },
+  { command: `"${executable}" -- -- "%1"` },
   { command: `"${executable}" --hidden "%1"` },
   { command: `${executable} "%1"` },
   { command: ['unexpected'] }, { icon: 'other' }, { notRunning: false },

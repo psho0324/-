@@ -279,9 +279,15 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     const cases=[
       [{error:'access_denied',error_description:raw},'CANCELLED','취소'],
       [{error:'invalid_client',error_description:raw},'CONFIG','설정'],
-      [{error:'server_error',error_code:'unexpected_failure',error_description:raw},'CONFIG','설정'],
+      [{error:'server_error',error_code:'unexpected_failure',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
+      [{error:'server_error',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
+      [{error_code:'unexpected_failure',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
       [{error_code:'invalid_client',error_description:raw},'CONFIG','설정'],
       [{error:'unrecognized_error',error_description:'oauth2: "invalid_client" '+raw},'CONFIG','설정'],
+      [{error:'server_error',error_code:'unexpected_failure',error_description:'oauth2: "invalid_client" '+raw},'CONFIG','설정'],
+      [{error:'server_error',error_description:'The provided client secret is invalid. '+raw},'CONFIG','설정'],
+      [{error:'unexpected_failure',error_description:'unauthorized_client '+raw},'CONFIG','설정'],
+      [{error_description:'unexpected_failure '+raw},'TEMPORARY','잠시 뒤 다시'],
       [{error_description:'access_denied '+raw},'CANCELLED','취소'],
       [{error:'unrecognized_error',error_code:'unrecognized_code',error_description:raw},'FAILED','완료하지 못'],
       [{error_description:raw},'FAILED','완료하지 못'],
@@ -291,6 +297,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       const url=failureCallback(f,{...params,code:'SYNTHETIC_UNUSED_CODE',access_token:'SYNTHETIC_UNUSED_TOKEN'});
       const response=await localRequest(url);
       assert.equal(response.status,400);assert.match(response.body,new RegExp(text));
+      if(category==='TEMPORARY')assert.doesNotMatch(response.body,/설정/);
       assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['referrer-policy'],'no-referrer');
       assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+category);
       assert.equal(f.service.getState().pending,false);assert.equal(f.service.getState().authenticated,false);
@@ -302,11 +309,16 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       assert(!response.body.includes('http'));assert(!publicOutput.includes('error_description'));
     }
   });
-  await test('Structured error codes take precedence over free-form descriptions',async()=>{
+  await test('Specific structured failures beat descriptions and generic server wrappers',async()=>{
     for(const [params,expected] of [
       [{error:'access_denied',error_description:'SYNTHETIC invalid_client detail'},'CANCELLED'],
       [{error:'invalid_client',error_description:'SYNTHETIC access_denied detail'},'CONFIG'],
-      [{error:'access_denied',error_code:'unexpected_failure'},'CONFIG'],
+      [{error:'access_denied',error_code:'unexpected_failure'},'CANCELLED'],
+      [{error:'server_error',error_code:'user_cancelled',error_description:'SYNTHETIC invalid_client detail'},'CANCELLED'],
+      [{error:'invalid_client',error_code:'unexpected_failure'},'CONFIG'],
+      [{error:'server_error',error_code:'invalid_client',error_description:'SYNTHETIC access_denied detail'},'CONFIG'],
+      [{error:'invalid_client',error_code:'access_denied'},'CANCELLED'],
+      [{error:'access_denied',error_code:'invalid_client'},'CONFIG'],
     ]){
       const f=fixture();await f.service.signInGoogle();await localRequest(failureCallback(f,params));
       assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+expected);assert.equal(f.requests.length,0);
@@ -321,7 +333,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     }
   });
   await test('Each provider failure permits a fresh Google attempt and clears the error before successful login',async()=>{
-    for(const error of ['access_denied','invalid_client','unrecognized_error']){
+    for(const error of ['access_denied','invalid_client','server_error','unexpected_failure','unrecognized_error']){
       const f=fixture();await f.service.signInGoogle();const previous=failureCallback(f,{error});await localRequest(previous);
       assert(f.service.getState().error);await f.service.signInGoogle();
       assert.equal(f.service.getState().error,'');assert.equal(f.service.getState().pending,true);
@@ -338,7 +350,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
     const f=fixture({callbackPort:port}),agent=new http.Agent({keepAlive:true,maxSockets:1});
     try{
-      for(const [error,category] of [['invalid_client','CONFIG'],['access_denied','CANCELLED'],['unknown_error','FAILED']]){
+      for(const [error,category] of [['invalid_client','CONFIG'],['access_denied','CANCELLED'],['server_error','TEMPORARY'],['unexpected_failure','TEMPORARY'],['unknown_error','FAILED']]){
         await f.service.signInGoogle();const response=await localRequest(failureCallback(f,{error}),{agent});
         assert.equal(response.headers.connection,'close');assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+category);
         assert.equal(f.service.getState().pending,false);assert.equal(f.requests.length,0);

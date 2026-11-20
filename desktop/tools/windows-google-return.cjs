@@ -129,8 +129,8 @@ public static class PlannerNative {
    if(isolated) {
     const string prefix="--user-data-dir=";
     result[2]=count>=2 && args[1].StartsWith(prefix,StringComparison.Ordinal) && String.Equals(System.IO.Path.GetFullPath(args[1].Substring(prefix.Length)),System.IO.Path.GetFullPath(profile),StringComparison.OrdinalIgnoreCase);
-    result[3]=count==3 && args[2]=="%1";
-   } else { result[2]=count==2; result[3]=count==2 && args[1]=="%1"; }
+    result[3]=count==4 && args[2]=="--" && args[3]=="%1";
+   } else { result[2]=count==3; result[3]=count==3 && args[1]=="--" && args[2]=="%1"; }
   } catch { /* An unexpected command remains unready and is never dispatched. */ }
   finally { LocalFree(values); }
   return result;
@@ -428,11 +428,11 @@ async function registerOwnedProtocol() {
   const normalize=value=>path.resolve(value).toLowerCase();
   if(!packaged||normalize(executable)!==normalize(installedExecutable)||normalize(actualExecutable)!==normalize(installedExecutable))throw inconclusive('Protocol handoff is restricted to the verified owned CI installation');
   const exists=JSON.parse(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[bool](Test-Path 'Registry::HKEY_CLASSES_ROOT\\tteodori-planner') | ConvertTo-Json -Compress"],{encoding:'utf8',windowsHide:true,timeout:8000}).trim());
-  const priorOwn=exists&&await running.evaluate(({app},scheme)=>app.isDefaultProtocolClient(scheme,process.execPath,[]),scheme);
+  const priorOwn=exists&&await running.evaluate(({app},scheme)=>app.isDefaultProtocolClient(scheme,process.execPath,['--']),scheme);
   if(exists&&!priorOwn)throw inconclusive('Unknown application protocol registration exists; refusing to replace it');
   protocolRegistration=await running.evaluate(({app},{scheme,profile,priorOwn})=>{
     if(process.env.CI!=='true'||process.env.RUNNER_OS!=='Windows'||app.getPath('userData')!==profile)throw Error('Owned Windows CI profile only');
-    const args=['--user-data-dir='+profile];
+    const args=['--user-data-dir='+profile,'--'];
     const executable=process.execPath;
     // require is not a normal global in the inspector evaluation context.
     // Load only the validated installed app's own protocol classifier.
@@ -739,8 +739,8 @@ async function edgeObservation() {
         edge.protocolRegistrationCleaned=await bounded(running.evaluate(({app},registration)=>{
           if(!app.isDefaultProtocolClient(registration.scheme,registration.executable,registration.args))return false;
           if(registration.priorOwn){
-            const restored=app.setAsDefaultProtocolClient(registration.scheme,registration.executable,[]);
-            return restored&&app.isDefaultProtocolClient(registration.scheme,registration.executable,[]);
+            const restored=app.setAsDefaultProtocolClient(registration.scheme,registration.executable,['--']);
+            return restored&&app.isDefaultProtocolClient(registration.scheme,registration.executable,['--']);
           }
           return app.removeAsDefaultProtocolClient(registration.scheme,registration.executable,registration.args);
         },protocolRegistration).catch(()=>false),6000,false);

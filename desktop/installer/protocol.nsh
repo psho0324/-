@@ -1,7 +1,8 @@
 ; NSIS does not consume electron-builder's generic `protocols` option.
 ; Use the selected install scope and registry view already set by the template.
 !define PLANNER_PROTOCOL_KEY "Software\Classes\tteodori-planner"
-!define PLANNER_PROTOCOL_COMMAND '$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\" $\"%1$\"'
+; End Chromium switch parsing before the externally supplied URL argument.
+!define PLANNER_PROTOCOL_COMMAND '$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\" -- $\"%1$\"'
 
 !macro customInstall
   WriteRegStr SHCTX "${PLANNER_PROTOCOL_KEY}" "" "URL:tteodori-planner"

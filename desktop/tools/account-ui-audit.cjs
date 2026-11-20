@@ -109,6 +109,7 @@ async function scenario(name, options, run) {
   for (const [code, expected] of [
     ['ACCOUNT_GOOGLE_CANCELLED', '구글 로그인을 취소했어요. 다시 시도하거나 로그인 없이 계속 사용할 수 있어요.'],
     ['ACCOUNT_GOOGLE_CONFIG', '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+    ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인 서버에 잠시 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
     ['ACCOUNT_GOOGLE_FAILED', '구글 로그인을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
   ]) await scenario(`Google callback ${code} is visible, ends waiting and permits a fresh attempt`, {}, async page => {
     const before = await page.evaluate(() => structuredClone(window.__persisted));
@@ -141,12 +142,17 @@ async function scenario(name, options, run) {
   });
   await scenario('Google guidance uses the fixed code and never renders raw provider diagnostics', {}, async page => {
     const raw = 'SYNTHETIC_PROVIDER_DIAGNOSTIC https://example.invalid/?code=SYNTHETIC_PROVIDER_CODE <img src=x onerror=alert(1)>';
-    await page.evaluate(({ state, raw }) => window.__emitAccount({ ...state, auth: { ...state.auth, pending: false, error: { code: 'ACCOUNT_GOOGLE_CONFIG', message: raw } } }), { state: guest, raw });
-    await page.locator('#account-message').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('#account-message').innerText(), '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.');
-    assert(!(await page.locator('#set-accountCard').innerText()).includes('SYNTHETIC_PROVIDER'));
-    assert(!(await page.locator('#set-accountCard').innerHTML()).includes('example.invalid/?code='));
-    assert.equal(await page.locator('#set-accountCard img').count(), 0);
+    for (const [code, expected] of [
+      ['ACCOUNT_GOOGLE_CONFIG', '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+      ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인 서버에 잠시 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+    ]) {
+      await page.evaluate(({ state, raw, code }) => window.__emitAccount({ ...state, auth: { ...state.auth, pending: false, error: { code, message: raw } } }), { state: guest, raw, code });
+      await page.locator('#account-message').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#account-message').innerText(), expected);
+      assert(!(await page.locator('#set-accountCard').innerText()).includes('SYNTHETIC_PROVIDER'));
+      assert(!(await page.locator('#set-accountCard').innerHTML()).includes('example.invalid/?code='));
+      assert.equal(await page.locator('#set-accountCard img').count(), 0);
+    }
     await page.evaluate(state => window.__emitAccount({ ...state, auth: { ...state.auth, error: 'unknown untrusted server details SYNTHETIC_PROVIDER_DIAGNOSTIC' } }), guest);
     assert.equal(await page.locator('#account-message').innerText(), '계정 연결을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.');
     assert(!(await page.locator('#set-accountCard').innerText()).includes('SYNTHETIC_PROVIDER'));

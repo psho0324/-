@@ -23,24 +23,29 @@ function validateConfig(value) {
 }
 
 function googleCallbackFailure(params) {
-  // Structured provider codes take precedence over free-form descriptions.
-  // Only fixed categories/messages may leave this function, never server text.
+  // Specific structured codes take precedence over free-form descriptions.
+  // Generic server wrappers alone do not prove a configuration problem. Only
+  // fixed categories/messages may leave this function, never server text.
   const classify = value => {
     const code = (value || '').trim().toLowerCase();
     if (['access_denied', 'user_cancelled', 'user_canceled', 'cancelled', 'canceled'].includes(code)) return 'CANCELLED';
-    if (['invalid_client', 'unexpected_failure', 'server_error', 'unauthorized_client', 'unsupported_provider'].includes(code)) return 'CONFIG';
+    if (['invalid_client', 'unauthorized_client', 'unsupported_provider'].includes(code)) return 'CONFIG';
+    if (['unexpected_failure', 'server_error'].includes(code)) return 'TEMPORARY';
     return null;
   };
-  let category = classify(params.get('error_code')) || classify(params.get('error'));
+  const codes = [classify(params.get('error_code')), classify(params.get('error'))];
+  let category = codes.find(code => code && code !== 'TEMPORARY');
   if (!category) {
     const description = params.get('error_description') || '';
-    if (/\binvalid_client\b|\bunexpected_failure\b|\bclient secret is invalid\b/i.test(description)) category = 'CONFIG';
+    if (/\binvalid_client\b|\bunauthorized_client\b|\bunsupported_provider\b|\bclient secret is invalid\b/i.test(description)) category = 'CONFIG';
     else if (/\baccess_denied\b|\buser[ _-]cancel(?:led|ed)\b/i.test(description)) category = 'CANCELLED';
+    else if (codes.includes('TEMPORARY') || /\bserver_error\b|\bunexpected_failure\b/i.test(description)) category = 'TEMPORARY';
     else category = 'FAILED';
   }
   const browser = {
     CANCELLED: 'Google 로그인을 취소했습니다. 앱으로 돌아가 다시 시도해 주세요.',
     CONFIG: 'Google 로그인 설정을 확인해야 합니다. 앱으로 돌아가 주세요.',
+    TEMPORARY: 'Google 로그인 서버에 잠시 문제가 생겼습니다. 앱으로 돌아가 잠시 뒤 다시 시도해 주세요.',
     FAILED: 'Google 로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.',
   }[category];
   return { code: 'ACCOUNT_GOOGLE_' + category, browser };

@@ -282,8 +282,10 @@ async function blockedSuccess(f, context, hide = true) {
   for (const [error, expected, category] of [
     ['invalid_client', /설정/, 'CONFIG'],
     ['access_denied', /취소/, 'CANCELLED'],
+    ['server_error', /잠시 뒤 다시/, 'TEMPORARY'],
+    ['unexpected_failure', /잠시 뒤 다시/, 'TEMPORARY'],
     ['unrecognized_error', /완료하지 못/, 'FAILED'],
-  ]) await scenario(`Failed callback ${category} remains visible without running close or focus`, { blockClose: true }, async ({ f, context }) => {
+  ]) await scenario(`Failed callback ${category} (${error}) remains visible without running close or focus`, { blockClose: true }, async ({ f, context }) => {
     const page = await context.newPage();
     const response = await page.goto(f.callback({ error, error_description: PRIVATE_DETAIL }).href);
     assert.equal(response.status(), 400); assert.match(response.headers()['content-type'], /^text\/plain/);

@@ -9,7 +9,7 @@ function inspectRegistration(snapshot, executable) {
   return {
     registered: snapshot?.exists === true,
     urlProtocolMarker: snapshot?.markerExists === true && snapshot.marker === '',
-    ownQuotedCommand: equal(snapshot?.command, `"${executable}" "%1"`),
+    ownQuotedCommand: equal(snapshot?.command, `"${executable}" -- "%1"`),
     ownQuotedIcon: equal(snapshot?.icon, `"${executable}",0`),
     installedAppNotRunning: snapshot?.notRunning === true,
   };
