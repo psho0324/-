@@ -40,7 +40,6 @@ async function bounded(promise, milliseconds, fallback) {
 function publicSummary(value) {
   const shortError=items=>items?.[0]?safeMessage(items[0]).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,120):undefined;
   const edge=value.edge||{};
-  const firstPointFailure=edge.states?.find(state=>state.protocol?.confirmation?.pointEvidence||state.protocol?.initialPrompt?.pointEvidence||state.protocol?.nativeLink?.pointEvidence)?.mode;
   const modes=(edge.attempts||[]).slice(0,3).map(attempt=>{
     const state=edge.states?.find(item=>item.mode===attempt.mode);
     const protocol=state?.protocol;
@@ -48,11 +47,10 @@ function publicSummary(value) {
     return{mode:attempt.mode,http:attempt.callbackHttpStatus,fresh:attempt.freshCapture,request:attempt.callbackRequestMatched,
       pkce:attempt.pkceAdvanced,pending:attempt.pendingAfter,nav:attempt.navigationError,clean:attempt.urlCleaned,currentFg:state?.currentProduct?.settled?.foregroundPlanner,shell:attempt.shellReadyBeforeNavigation,
       protocol:protocol?{outcome:protocol.status,foreground:protocol.settled?.foregroundPlanner,singleWindow:protocol.singleWindow,topmost:protocol.settled?.topmost,
-        auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,clickMs:protocol.arrivalAfterClickMs,
-        late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,clickMs:protocol.passiveObservation.arrivalAfterClickMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs,foreground:protocol.lateSettled?.foregroundPlanner,visible:protocol.lateSettled?.visible,minimized:protocol.lateSettled?.minimized,topmost:protocol.lateSettled?.topmost,singleWindow:protocol.lateSingleWindow}:undefined,
-        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2),workerFault:dialog?.workerFault,workerPhase:dialog?.workerPhase,point:attempt.mode===firstPointFailure?dialog?.pointEvidence:undefined},
-        nativeLink:protocol.nativeLink?.nativeClicked===true,linkOwnerMismatch:protocol.nativeLink?.ownershipMismatch,namedLinks:protocol.nativeLink?.namedCount,ownedLinks:protocol.nativeLink?.ownedCount,linkFault:protocol.nativeLink?.workerFault,linkPhase:protocol.nativeLink?.workerPhase,
-        linkPoint:attempt.mode===firstPointFailure?protocol.nativeLink?.pointEvidence:undefined,
+        auto:protocol.automaticRequests,explicit:protocol.explicitRequests,closed:protocol.callbackClosed,baseline:protocol.eventBaseline,total:protocol.totalRequests,methods:protocol.activationMethods,activationMs:protocol.arrivalAfterActivationMs,
+        late:protocol.passiveObservation?{arrived:protocol.passiveObservation.lateArrived,before:protocol.passiveObservation.countBefore,after:protocol.passiveObservation.countAfter,activationMs:protocol.passiveObservation.arrivalAfterActivationMs,waitMs:protocol.passiveObservation.arrivalAfterWaitMs,watchedMs:protocol.passiveObservation.passiveMs,foreground:protocol.lateSettled?.foregroundPlanner,visible:protocol.lateSettled?.visible,minimized:protocol.lateSettled?.minimized,topmost:protocol.lateSettled?.topmost,singleWindow:protocol.lateSingleWindow}:undefined,
+        prompt:{matched:dialog?.present,acted:dialog?.acted,dismissed:dialog?.dismissed,initialDismissed:protocol.initialPrompt?.dismissed,initialAbsent:protocol.initialPrompt?.absenceConfirmed,app:dialog?.permissionAppMatched,text:dialog?.permissionTextMatched,subtree:dialog?.permissionSubtreeMatched,buttons:dialog?.knownButtons?.slice(0,2),method:dialog?.activationMethod,workerFault:dialog?.workerFault,workerPhase:dialog?.workerPhase},
+        domLink:protocol.domLink?.trustedClicked===true,
         error:shortError(protocol.errors)}:undefined};
   });
   const summary={status:value.status,packaged:value.packaged,runtime:value.runtime,desktop:value.desktop,
@@ -71,7 +69,7 @@ function publicSummary(value) {
   }
   if(Buffer.byteLength(JSON.stringify(summary))>=3500){
     summary.detailsInArtifact=true;
-    summary.edge.modes=summary.edge.modes.map(({mode,http,pkce,protocol})=>({mode,http,pkce,protocol:protocol?{outcome:protocol.outcome,foreground:protocol.foreground,singleWindow:protocol.singleWindow,topmost:protocol.topmost,baseline:protocol.baseline,total:protocol.total,prompt:protocol.prompt,linkFault:protocol.linkFault,linkPhase:protocol.linkPhase,linkPoint:protocol.linkPoint,error:protocol.error}:undefined}));
+    summary.edge.modes=summary.edge.modes.map(({mode,http,pkce,protocol})=>({mode,http,pkce,protocol:protocol?{outcome:protocol.outcome,foreground:protocol.foreground,singleWindow:protocol.singleWindow,topmost:protocol.topmost,baseline:protocol.baseline,total:protocol.total,methods:protocol.methods,prompt:protocol.prompt,error:protocol.error}:undefined}));
   }
   return summary;
 }
@@ -104,14 +102,6 @@ public static class PlannerNative {
  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
- [DllImport("user32.dll")] public static extern bool GetPhysicalCursorPos(out POINT point);
- [DllImport("user32.dll")] public static extern bool SetPhysicalCursorPos(int x, int y);
- [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
- [DllImport("user32.dll")] public static extern IntPtr GetThreadDpiAwarenessContext();
- [DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second);
- [DllImport("user32.dll")] public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
- [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
- [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
@@ -149,20 +139,6 @@ public static class PlannerNative {
  public static bool Above(IntPtr a, IntPtr b) { if(a==IntPtr.Zero || b==IntPtr.Zero || a==b) return false; IntPtr h=GetWindow(b,3); for(int i=0;i<2048 && h!=IntPtr.Zero;i++,h=GetWindow(h,3)) if(h==a) return true; return false; }
  public static uint Owner(IntPtr h) { uint p=0; if(h!=IntPtr.Zero) GetWindowThreadProcessId(h,out p); return p; }
  public static bool BrowserFrame(IntPtr h) { var name=new System.Text.StringBuilder(128); GetClassName(h,name,name.Capacity); return name.ToString()=="Chrome_WidgetWin_1"; }
- public static void ClickOwnedPoint(IntPtr frame, uint owner, int x, int y) {
-  RECT bounds; POINT previous;
-  if(!AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(),new IntPtr(-4))) throw new InvalidOperationException("DPI_CONTEXT_ERROR");
-  if(Owner(frame)!=owner || !BrowserFrame(frame) || !IsWindowVisible(frame) || Owner(GetForegroundWindow())!=owner || !GetWindowRect(frame,out bounds) || x<=bounds.Left || x>=bounds.Right || y<=bounds.Top || y>=bounds.Bottom || !GetPhysicalCursorPos(out previous)) throw new InvalidOperationException("Owned foreground click precondition failed");
-  POINT point=new POINT(); point.X=x;point.Y=y;
-  IntPtr hit=GetAncestor(WindowFromPoint(point),2);
-  if(Owner(hit)!=owner || !BrowserFrame(hit)) throw new InvalidOperationException("Another window covers the owned click target");
-  bool down=false;
-  try {
-   if(!SetPhysicalCursorPos(x,y) || Owner(GetForegroundWindow())!=owner || Owner(GetAncestor(WindowFromPoint(point),2))!=owner) throw new InvalidOperationException("Owned click target changed before input");
-   mouse_event(2,0,0,0,UIntPtr.Zero);down=true;mouse_event(4,0,0,0,UIntPtr.Zero);down=false;
-   System.Threading.Thread.Sleep(60);
-  } finally { if(down) mouse_event(4,0,0,0,UIntPtr.Zero); SetPhysicalCursorPos(previous.X,previous.Y); }
- }
  public static IntPtr BrowserWindow(uint process) { IntPtr found=IntPtr.Zero; EnumWindows(delegate(IntPtr h,IntPtr l) { if(Owner(h)==process && IsWindowVisible(h) && BrowserFrame(h)) {found=h;return false;} return true; },IntPtr.Zero); return found; }
 }
 `;
@@ -237,63 +213,28 @@ const workerFaultMapping=String.raw`
 function Get-OwnedWorkerFault($Record){
  $failure=$Record.Exception;$detail='';$types=''
  for($level=0;$failure -and $level -lt 4;$level++){$detail+=' '+$failure.Message;$types+=' '+$failure.GetType().Name;$failure=$failure.InnerException}
- if($detail -match 'Owned foreground click precondition failed'){return 'FOREGROUND_PRECONDITION'}
- if($detail -match 'Another window covers the owned click target'){return 'WINDOW_COVERED'}
- if($detail -match 'Owned click target changed before input'){return 'WINDOW_CHANGED'}
- if($detail -match 'Another UI element covers the owned permission button'){return 'PERMISSION_POINT_MISMATCH'}
- if($detail -match 'Another UI element covers the owned app-return hyperlink'){return 'LINK_POINT_MISMATCH'}
- if($detail -match 'POINT_UNAVAILABLE'){return 'POINT_UNAVAILABLE'}
- if($detail -match 'DPI_CONTEXT_ERROR'){return 'DPI_CONTEXT_ERROR'}
+ if($detail -match 'Owned Edge was not foreground before control activation'){return 'FOREGROUND_PRECONDITION'}
+ if($detail -match 'INVOKE_UNAVAILABLE'){return 'INVOKE_UNAVAILABLE'}
+ if($detail -match 'CONTROL_CHANGED'){return 'CONTROL_CHANGED'}
  if($detail -match 'permission button is not visible'){return 'PERMISSION_NOT_VISIBLE'}
  if($detail -match 'no safe bounds'){return 'BOUNDS_INVALID'}
- if($detail -match 'Expected one visible owned app-return hyperlink'){return 'LINK_MISSING'}
  if($detail -match 'Compilation errors|Cannot add type'){return 'NATIVE_TYPE_COMPILE'}
  if($types -match 'TypeNotFound|FileNotFound' -or $detail -match '(Cannot|Unable to|Could not).*(find|load).*(type|assembly)'){return 'TYPE_MISSING'}
  if($types -match 'ElementNotAvailable' -or $detail -match 'element.*not.*available'){return 'STALE_ELEMENT'}
  if($detail -match 'outside the owned browser'){return 'OWNERSHIP_MISMATCH'}
  return 'WORKER_FAILURE'
 }
-function Get-OwnedPointEvidence($Chosen,$Hit,$Target,$Owner,$Point,$Before,$After){
- # Numbers and booleans only. UIA uses physical coordinates; do not emit labels,
- # runtime IDs, URLs or native handles when a point cannot be verified.
- function Bounded-Number($Number){
-  $n=[double]$Number
-  if([double]::IsNaN($n) -or [double]::IsInfinity($n)){return $null}
-  return [Math]::Round([Math]::Max(-65536,[Math]::Min(65536,$n)),1)
- }
- function Bounded-Rect($Rect){return @((Bounded-Number $Rect.X),(Bounded-Number $Rect.Y),(Bounded-Number $Rect.Width),(Bounded-Number $Rect.Height))}
- $e=@{dpi=@($Before,$After,[Math]::Min(1536,[PlannerNative]::GetDpiForWindow($Target)));chosen=(Bounded-Rect $Chosen.Current.BoundingRectangle);selectedControl=$Chosen.Current.IsControlElement}
- $e.screen=@((Bounded-Number ([PlannerNative]::GetSystemMetrics(76))),(Bounded-Number ([PlannerNative]::GetSystemMetrics(77))),(Bounded-Number ([PlannerNative]::GetSystemMetrics(78))),(Bounded-Number ([PlannerNative]::GetSystemMetrics(79))))
- $frame=New-Object PlannerNative+RECT
- if([PlannerNative]::GetWindowRect($Target,[ref]$frame)){$e.frame=@((Bounded-Number $frame.Left),(Bounded-Number $frame.Top),(Bounded-Number ($frame.Right-$frame.Left)),(Bounded-Number ($frame.Bottom-$frame.Top)))}
- if($Hit){$e.hit=Bounded-Rect $Hit.Current.BoundingRectangle;$e.hitOwned=$Hit.Current.ProcessId -eq $Owner;$e.hitType=[Math]::Max(0,[Math]::Min(50100,$Hit.Current.ControlType.Id))}
- if($Point){
-  $e.point=@((Bounded-Number $Point.X),(Bounded-Number $Point.Y))
-  if($null -ne $e.point[0] -and $null -ne $e.point[1]){
-   $nativePoint=New-Object PlannerNative+POINT;$nativePoint.X=[int]$Point.X;$nativePoint.Y=[int]$Point.Y
-   $e.nativeOwned=[PlannerNative]::Owner([PlannerNative]::GetAncestor([PlannerNative]::WindowFromPoint($nativePoint),2)) -eq $Owner
-  }
- }
- return $e
-}
 `;
 fs.writeFileSync(edgeDialogFile,'\ufeff'+String.raw`
-param([string]$Native,[string]$Window,[string]$ExpectedOwner,[ValidateSet('accept','cancel')][string]$Action,[int]$WaitMilliseconds=1500)
+param([string]$Native,[string]$Window,[string]$ExpectedOwner,[int]$WaitMilliseconds=1500)
 ${workerFaultMapping}
 $ErrorActionPreference='Stop'
 $result=@{present=$false;acted=$false;dismissed=$false;absenceConfirmed=$false;knownButtons=@();permissionAppMatched=$false;permissionTextMatched=$false;permissionSubtreeMatched=$false}
-$previousDpi=[IntPtr]::Zero
 $phase='guard'
 try{
 if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
 $phase='load-types'
 Add-Type -Path $Native
-$phase='dpi-context'
-$dpiBefore=[PlannerNative]::GetAwarenessFromDpiAwarenessContext([PlannerNative]::GetThreadDpiAwarenessContext())
-$previousDpi=[PlannerNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
-if($previousDpi -eq [IntPtr]::Zero -or ![PlannerNative]::AreDpiAwarenessContextsEqual([PlannerNative]::GetThreadDpiAwarenessContext(),[IntPtr](-4))){throw 'DPI_CONTEXT_ERROR'}
-$dpiAfter=[PlannerNative]::GetAwarenessFromDpiAwarenessContext([PlannerNative]::GetThreadDpiAwarenessContext())
-$phase='load-types'
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -350,29 +291,23 @@ do{
  # No arbitrary UI, checkbox or browser policy is changed to skip confirmation.
  if($permission){
   $result.present=$true
-  $chosen=if($Action -eq 'accept'){$permission.open}else{$permission.cancel}
+  $chosen=$permission.open
   if($chosen.Current.IsOffscreen){throw 'Owned permission button is not visible'}
   $key=$chosen.GetRuntimeId() -join ':';$bounds=$chosen.Current.BoundingRectangle
   if($bounds.Width -lt 10 -or $bounds.Height -lt 10){throw 'Owned permission button has no safe bounds'}
-  $phase='point-lookup'
-  $clickPoint=[System.Windows.Point]::new(0,0)
-  if(!$chosen.TryGetClickablePoint([ref]$clickPoint) -or [double]::IsNaN($clickPoint.X) -or [double]::IsInfinity($clickPoint.X) -or [double]::IsNaN($clickPoint.Y) -or [double]::IsInfinity($clickPoint.Y)){
-   $result.pointEvidence=Get-OwnedPointEvidence $chosen $null $target $owner $null $dpiBefore $dpiAfter
-   throw 'POINT_UNAVAILABLE'
-  }
-  $x=[int][Math]::Round($clickPoint.X,[MidpointRounding]::AwayFromZero);$y=[int][Math]::Round($clickPoint.Y,[MidpointRounding]::AwayFromZero)
-  # Revalidate the exact integer coordinates that native input will use. A
-  # provider-approved fractional point is not permission to skip this guard.
-  $hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
-  $firstHit=$hit
-  $pointWalker=[Windows.Automation.TreeWalker]::RawViewWalker
-  for($depth=0;$hit -and $depth -lt 8;$depth++) {if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$pointWalker.GetParent($hit)}
-  if(!$same){
-   $result.pointEvidence=Get-OwnedPointEvidence $chosen $firstHit $target $owner ([System.Windows.Point]::new($x,$y)) $dpiBefore $dpiAfter
-   throw 'Another UI element covers the owned permission button'
-  }
-  $phase='native-click'
-  [PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y);$result.acted=$true
+  $phase='invoke-pattern'
+  $pattern=$null
+  if(!$chosen.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$pattern) -or $pattern -isnot [Windows.Automation.InvokePattern]){throw 'INVOKE_UNAVAILABLE'}
+  # Invoke is semantic accessibility activation, not a physical mouse test.
+  # Reacquire the exact matched button before invoking; never substitute a
+  # different control just because it has the same visible name.
+  $fresh=[Windows.Automation.AutomationElement]::FromHandle($target)
+  $matches=@($fresh.FindAll([Windows.Automation.TreeScope]::Descendants,$condition) | Where-Object {($_.GetRuntimeId() -join ':') -eq $key})
+  if($matches.Count -ne 1 -or $matches[0].Current.ProcessId -ne $owner -or !$matches[0].Current.IsEnabled -or $matches[0].Current.IsOffscreen -or $chosen.Current.ProcessId -ne $owner -or !$chosen.Current.IsEnabled -or $chosen.Current.IsOffscreen -or ($chosen.GetRuntimeId() -join ':') -ne $key){throw 'CONTROL_CHANGED'}
+  if([PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target) -or ![PlannerNative]::IsWindowVisible($target) -or [PlannerNative]::Owner([PlannerNative]::GetForegroundWindow()) -ne $owner){throw 'Owned Edge was not foreground before control activation'}
+  $result.activationMethod='UIA InvokePattern'
+  $result.activationStartedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $pattern.Invoke();$result.acted=$true
   $phase='dismiss-wait'
   $dismissUntil=[DateTime]::UtcNow.AddMilliseconds(2000)
   do{
@@ -386,69 +321,6 @@ do{
 }while([DateTime]::UtcNow -lt $end)
 if(!$result.present -and $result.knownButtons.Count -eq 0){$result.absenceConfirmed=$true}
 }catch{$result.workerFault=Get-OwnedWorkerFault $_;$result.workerPhase=$phase}
-finally{
- if($previousDpi -ne [IntPtr]::Zero){
-  $restored=[PlannerNative]::SetThreadDpiAwarenessContext($previousDpi)
-  if($restored -eq [IntPtr]::Zero -or ![PlannerNative]::AreDpiAwarenessContextsEqual([PlannerNative]::GetThreadDpiAwarenessContext(),$previousDpi)){$result.workerFault='DPI_CONTEXT_ERROR';$result.workerPhase='dpi-restore'}
- }
-}
-$result | ConvertTo-Json -Depth 6 -Compress
-`);
-const edgeLinkFile=path.join(owned,'edge-return-link.ps1');
-fs.writeFileSync(edgeLinkFile,'\ufeff'+String.raw`
-param([string]$Native,[string]$Window,[string]$ExpectedOwner)
-${workerFaultMapping}
-$ErrorActionPreference='Stop'
-$result=@{matched=$false;nativeClicked=$false;pointMatched=$false}
-$previousDpi=[IntPtr]::Zero
-$phase='guard'
-try{
-if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'Owned Windows CI fixture only'}
-$phase='load-types'
-Add-Type -Path $Native
-$phase='dpi-context'
-$dpiBefore=[PlannerNative]::GetAwarenessFromDpiAwarenessContext([PlannerNative]::GetThreadDpiAwarenessContext())
-$previousDpi=[PlannerNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
-if($previousDpi -eq [IntPtr]::Zero -or ![PlannerNative]::AreDpiAwarenessContextsEqual([PlannerNative]::GetThreadDpiAwarenessContext(),[IntPtr](-4))){throw 'DPI_CONTEXT_ERROR'}
-$dpiAfter=[PlannerNative]::GetAwarenessFromDpiAwarenessContext([PlannerNative]::GetThreadDpiAwarenessContext())
-$phase='load-types'
-Add-Type -AssemblyName WindowsBase
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$phase='lookup-root'
-$target=[IntPtr]([long]::Parse($Window));$owner=[uint32]::Parse($ExpectedOwner)
-if([PlannerNative]::Owner($target) -ne $owner -or ![PlannerNative]::BrowserFrame($target)){throw 'Refusing link input outside the owned browser'}
-$root=[Windows.Automation.AutomationElement]::FromHandle($target)
-$phase='match-control'
-$condition=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Hyperlink)
-$namedLinks=@($root.FindAll([Windows.Automation.TreeScope]::Descendants,$condition) | Where-Object {$_.Current.Name -eq '플래너로 돌아가기' -and $_.Current.IsEnabled -and !$_.Current.IsOffscreen})
-$returnLinks=@($namedLinks | Where-Object {$_.Current.ProcessId -eq $owner})
-if($returnLinks.Count -ne 1){$result.namedCount=$namedLinks.Count;$result.ownedCount=$returnLinks.Count;$result.ownershipMismatch=$namedLinks.Count -gt $returnLinks.Count;throw 'Expected one visible owned app-return hyperlink'}
-$result.matched=$true
-$link=$returnLinks[0];$bounds=$link.Current.BoundingRectangle;$key=$link.GetRuntimeId() -join ':'
-if($bounds.Width -lt 20 -or $bounds.Height -lt 15){throw 'Owned app-return hyperlink has no safe bounds'}
-$phase='point-lookup'
-$clickPoint=[System.Windows.Point]::new(0,0)
-if(!$link.TryGetClickablePoint([ref]$clickPoint) -or [double]::IsNaN($clickPoint.X) -or [double]::IsInfinity($clickPoint.X) -or [double]::IsNaN($clickPoint.Y) -or [double]::IsInfinity($clickPoint.Y)){
- $result.pointEvidence=Get-OwnedPointEvidence $link $null $target $owner $null $dpiBefore $dpiAfter
- throw 'POINT_UNAVAILABLE'
-}
-$x=[int][Math]::Round($clickPoint.X,[MidpointRounding]::AwayFromZero);$y=[int][Math]::Round($clickPoint.Y,[MidpointRounding]::AwayFromZero)
-$walker=[Windows.Automation.TreeWalker]::RawViewWalker
-$hit=[Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new([double]$x,[double]$y));$same=$false
-$firstHit=$hit
-for($depth=0;$hit -and $depth -lt 8;$depth++){if(($hit.GetRuntimeId() -join ':') -eq $key){$same=$true;break};$hit=$walker.GetParent($hit)}
-if(!$same){$result.pointEvidence=Get-OwnedPointEvidence $link $firstHit $target $owner ([System.Windows.Point]::new($x,$y)) $dpiBefore $dpiAfter;throw 'Another UI element covers the owned app-return hyperlink'}
-$result.pointMatched=$true;$phase='native-click'
-[PlannerNative]::ClickOwnedPoint($target,$owner,$x,$y)
-$result.nativeClicked=$true
-}catch{$result.workerFault=Get-OwnedWorkerFault $_;$result.workerPhase=$phase}
-finally{
- if($previousDpi -ne [IntPtr]::Zero){
-  $restored=[PlannerNative]::SetThreadDpiAwarenessContext($previousDpi)
-  if($restored -eq [IntPtr]::Zero -or ![PlannerNative]::AreDpiAwarenessContextsEqual([PlannerNative]::GetThreadDpiAwarenessContext(),$previousDpi)){$result.workerFault='DPI_CONTEXT_ERROR';$result.workerPhase='dpi-restore'}
- }
-}
 $result | ConvertTo-Json -Depth 6 -Compress
 `);
 const formFile = path.join(owned, 'foreign-window.ps1');
@@ -603,11 +475,8 @@ function ownedWorker(file,args) {
     return{workerFault:fault,workerPhase:fault==='PS_PARSE_ERROR'?'parse':fault==='WORKER_OUTPUT_INVALID'?'output':'launch'};
   }
 }
-function protocolDialog(handle,owner,action,wait=1500) {
-  return ownedWorker(edgeDialogFile,['-Window',handle,'-ExpectedOwner',String(owner),'-Action',action,'-WaitMilliseconds',String(wait)]);
-}
-function nativeReturnLink(handle,owner) {
-  return ownedWorker(edgeLinkFile,['-Window',handle,'-ExpectedOwner',String(owner)]);
+function protocolDialog(handle,owner,wait=1500) {
+  return ownedWorker(edgeDialogFile,['-Window',handle,'-ExpectedOwner',String(owner),'-WaitMilliseconds',String(wait)]);
 }
 async function protocolObservation(browserPage,handle,owner,baseline,attemptStartedAt) {
   const requests=async()=>{
@@ -620,17 +489,49 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
     if(!Number.isSafeInteger(at))throw inconclusive('Owned app-return event timing was unavailable');
     return at;
   };
-  const result={status:'running',ownedRegistration:true,eventBaseline:baseline,automaticRequests:(await requests())-baseline};
+  const result={status:'running',ownedRegistration:true,eventBaseline:baseline,automaticRequests:(await requests())-baseline,activationMethods:[]};
+  // The same fresh-event gate applies to the initial browser prompt and to the
+  // visible-link fallback. A late event is evidence only, never another mode's
+  // success. InvokePattern itself is not evidence that Shell launched the app.
+  const waitForFreshEvent=async activationStartedAt=>{
+    const waitStartedAt=Date.now();
+    try {
+      await until(async()=>await requests()>baseline,'Application-return handoff did not reach the existing isolated instance',6000);
+    } catch(error) {
+      if(!error.inconclusive)throw error;
+      const passiveStartedAt=Date.now();let count=await requests();
+      while(count<=baseline&&Date.now()-passiveStartedAt<12000){await pause(100);count=await requests()}
+      const receivedAt=count>baseline?await eventTime(baseline):null;
+      result.passiveObservation={initialWindowMs:passiveStartedAt-waitStartedAt,passiveMs:Date.now()-passiveStartedAt,lateArrived:receivedAt!==null,countBefore:baseline,countAfter:count,
+        arrivalAfterActivationMs:receivedAt===null?null:Math.max(0,receivedAt-activationStartedAt),arrivalAfterWaitMs:receivedAt===null?null:Math.max(0,receivedAt-waitStartedAt)};
+      result.lateSettled=observation(probe(plannerHandle,handle));result.lateSingleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1);
+      throw inconclusive(receivedAt===null?'No app-return event in the initial gate or passive observation; remaining modes stopped':'App-return arrived after the initial gate; latency recorded and remaining modes stopped');
+    }
+    result.arrivalAfterActivationMs=Math.max(0,(await eventTime(baseline))-activationStartedAt);
+  };
   try{
-    // The current callback may already have triggered a browser permission
-    // prompt. Decline it in this synthetic run before testing the visible link.
-    result.initialPrompt=protocolDialog(handle,owner,'cancel');
-    if(result.initialPrompt.workerFault)throw inconclusive('Initial permission worker: '+result.initialPrompt.workerFault+' at '+result.initialPrompt.workerPhase);
+    let activationStartedAt=attemptStartedAt;
+    if(result.automaticRequests===0){
+      const invokeStartedAt=Date.now();
+      // Follow the real initial journey: accept its owned Open control once.
+      // Do not cancel the first prompt merely to manufacture a manual retry.
+      result.initialPrompt=protocolDialog(handle,owner);
+      if(result.initialPrompt.activationMethod)result.activationMethods.push(result.initialPrompt.activationMethod);
+      if(result.initialPrompt.workerFault)throw inconclusive('Initial permission worker: '+result.initialPrompt.workerFault+' at '+result.initialPrompt.workerPhase);
+      if(result.initialPrompt.present){
+        if(!result.initialPrompt.acted||!result.initialPrompt.dismissed)throw inconclusive('Initial app-open control did not dismiss after invocation');
+        activationStartedAt=Number.isSafeInteger(result.initialPrompt.activationStartedAt)?result.initialPrompt.activationStartedAt:invokeStartedAt;
+        result.path='initial browser app-open prompt accepted by UIA InvokePattern';
+      }
+    }
     result.automaticRequests=(await requests())-baseline;
-    if(result.automaticRequests>0){
+    if(result.initialPrompt?.present){
+      // Wait below even when Invoke returned before the async Shell handoff.
+    }else if(result.automaticRequests>0){
+      result.activationMethods.push('automatic app link');
       result.path='automatic application handoff';
     }else{
-      if(result.initialPrompt.present?(!result.initialPrompt.acted||!result.initialPrompt.dismissed):!result.initialPrompt.absenceConfirmed)throw inconclusive('Initial app-open prompt dismissal was not confirmed; manual link click refused');
+      if(!result.initialPrompt?.absenceConfirmed)throw inconclusive('Initial app-open prompt absence was not confirmed; manual link click refused');
       if(browserPage.isClosed())throw inconclusive('Completion tab closed before the explicit application-return button could be tested');
       try{
         const link=browserPage.locator('#open-planner');
@@ -641,39 +542,33 @@ async function protocolObservation(browserPage,handle,owner,baseline,attemptStar
         result.shellReadyBeforeClick=shellAssociation('owned').ready;
         if(!result.shellReadyBeforeClick)throw inconclusive('Shell no longer resolves the owned isolated profile; explicit dispatch refused');
         const beforeRequests=await requests();
-        const clickStartedAt=Date.now();
-        try{
-          result.nativeLink=nativeReturnLink(handle,owner);
-          if(result.nativeLink.workerFault)throw inconclusive('Return-link worker: '+result.nativeLink.workerFault+' at '+result.nativeLink.workerPhase);
-          if(!result.nativeLink.nativeClicked)throw inconclusive('Native app-return hyperlink was not clicked');
-        }catch(error){if(!browserPage.isClosed()||await requests()<=beforeRequests)throw error.inconclusive?error:inconclusive('Explicit application-return link did not complete its browser click')}
-        if(!browserPage.isClosed())result.confirmation=protocolDialog(handle,owner,'accept',6000);
-        if(result.confirmation?.workerFault)throw inconclusive('Open permission worker: '+result.confirmation.workerFault+' at '+result.confirmation.workerPhase);
-        if(result.confirmation&&(!result.confirmation.acted||!result.confirmation.dismissed))throw inconclusive('Native app-open confirmation did not dismiss after its click');
-        const waitStartedAt=Date.now();
-        try {
-          await until(async()=>await requests()>beforeRequests,'Application-return handoff did not reach the existing isolated instance',6000);
-        } catch(error) {
-          if(!error.inconclusive)throw error;
-          // Evidence only: do not retry the click or let a late event count as
-          // success in another mode. Stop this Edge sequence after observation.
-          const passiveStartedAt=Date.now();let count=await requests();
-          while(count<=beforeRequests&&Date.now()-passiveStartedAt<12000){await pause(100);count=await requests()}
-          const receivedAt=count>beforeRequests?await eventTime(beforeRequests):null;
-          result.passiveObservation={initialWindowMs:passiveStartedAt-waitStartedAt,passiveMs:Date.now()-passiveStartedAt,lateArrived:receivedAt!==null,countBefore:beforeRequests,countAfter:count,
-            arrivalAfterClickMs:receivedAt===null?null:Math.max(0,receivedAt-clickStartedAt),arrivalAfterWaitMs:receivedAt===null?null:Math.max(0,receivedAt-waitStartedAt)};
-          result.lateSettled=observation(probe(plannerHandle,handle));result.lateSingleWindow=await running.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().length===1);
-          throw inconclusive(receivedAt===null?'No app-return event in the initial gate or passive observation; remaining modes stopped':'App-return arrived after the initial gate; latency recorded and remaining modes stopped');
+        if(beforeRequests>baseline){
+          result.automaticRequests=beforeRequests-baseline;result.activationMethods.push('automatic app link');result.path='automatic application handoff before manual input';
+        }else{
+          activationStartedAt=Date.now();
+          result.activationMethods.push('DOM trusted click');
+          try{
+            // Normal Playwright input/actionability; no forced or JS click.
+            // Do not await external navigation before servicing its OS prompt.
+            await link.click({timeout:6000,noWaitAfter:true});
+            result.domLink={trustedClicked:true};
+          }catch(error){if(!browserPage.isClosed()||await requests()<=beforeRequests)throw error.inconclusive?error:inconclusive('Explicit application-return link did not complete its trusted browser click')}
+          if(!browserPage.isClosed()&&await requests()<=beforeRequests){
+            result.confirmation=protocolDialog(handle,owner,6000);
+            if(result.confirmation.activationMethod)result.activationMethods.push(result.confirmation.activationMethod);
+            if(result.confirmation.workerFault)throw inconclusive('Open permission worker: '+result.confirmation.workerFault+' at '+result.confirmation.workerPhase);
+            if(result.confirmation.present?(!result.confirmation.acted||!result.confirmation.dismissed):!result.confirmation.absenceConfirmed)throw inconclusive('App-open confirmation did not dismiss after invocation or was not confirmed absent');
+          }
+          result.explicitRequests=(await requests())-beforeRequests;result.path='visible DOM link and owned UIA app-open confirmation';
         }
-        const receivedAt=await eventTime(beforeRequests);
-        result.arrivalAfterClickMs=receivedAt===null?null:Math.max(0,receivedAt-clickStartedAt);
-        result.explicitRequests=(await requests())-beforeRequests;result.path='explicit browser link and unmodified browser confirmation policy';
       }catch(error){
-        if(result.passiveObservation)throw error;
+        if(error.inconclusive)throw error;
         if(browserPage.isClosed()&&await requests()>baseline)result.path='application handoff completed while the browser return link was being inspected';
         else throw error.inconclusive?error:inconclusive('Owned browser return-link inspection did not complete');
       }
     }
+    await waitForFreshEvent(activationStartedAt);
+    if(result.domLink?.trustedClicked)result.explicitRequests=(await requests())-baseline;
     await pause(350);result.settled=observation(probe(plannerHandle,handle));
     result.callbackClosed=browserPage.isClosed();result.totalRequests=await requests();
     assert.equal(result.totalRequests-baseline,1,'An attempt received more than one app-return event');
