@@ -137,16 +137,16 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
     window.visible=false;f.app.emit('second-instance',{},['MyPlanner.exe']);assert.equal(window.visible,true);
     assert(!f.calls.some(call=>call[0]==='google'||call[0]==='email-verify'||call[0]==='connect'||call[0]==='sync'||call[0]==='network'));
   });
-  await test('Only the packaged Windows app registers its handler, private tests keep the live handler',async()=>{
-    const {APP_RETURN_SCHEME}=require('../app-return');
+  await test('App startup preserves installer-owned protocol registration in every build',async()=>{
     for(const options of [{platform:'win32',packaged:true},{platform:'win32',packaged:false},{platform:'linux',packaged:true},{platform:'win32',packaged:true,testBuild:true}]) {
       const f=fixture(options);await tick();const registered=f.calls.filter(call=>call[0]==='register-protocol');
-      assert.deepEqual(registered,options.platform==='win32'&&options.packaged&&!options.testBuild?[['register-protocol',APP_RETURN_SCHEME]]:[]);
+      assert.deepEqual(registered,[]);
       assert.equal(f.getAccountOptions().appReturnEnabled,options.platform==='win32'&&options.packaged&&!options.testBuild);
     }
   });
-  await test('A failed app-open registration preserves local saving and taskbar fallback',async()=>{
+  await test('Local saving and taskbar fallback do not depend on runtime protocol registration',async()=>{
     const f=fixture({platform:'win32',packaged:true,registrationFails:true,denyFocus:true});await tick();
+    assert(!f.calls.some(call=>call[0]==='register-protocol'));
     assert(f.windows.length===1);await f.invoke('data:save',{events:[],todos:[],projects:[],settings:{autoStart:false}});
     assert(f.calls.some(call=>call[0]==='save'));
     f.getAccountOptions().onGoogleSignInSuccess();assert(f.calls.some(call=>call[0]==='window-flash'&&call[1]===true));

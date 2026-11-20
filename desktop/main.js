@@ -7,7 +7,7 @@ const { createUpdateController } = require('./updater.js');
 const { createReminderScheduler } = require('./reminders.js');
 const { createAccountService } = require('./account-service.js');
 const { createSyncService } = require('./sync-service.js');
-const { APP_RETURN_SCHEME, classifyAppLaunch } = require('./app-return.js');
+const { classifyAppLaunch } = require('./app-return.js');
 const packageInfo = require('./package.json');
 const accountTestBuild = packageInfo.plannerAccountTest === true;
 
@@ -328,12 +328,9 @@ function start() {
   });
 
   app.whenReady().then(() => {
-    // NSIS registers the same static app-open link. Reinstall/update paths can
-    // change; packaged Windows builds repair their own registration if needed.
-    // Private account-test builds must not replace the installed app's handler.
-    if (process.platform === 'win32' && app.isPackaged && !accountTestBuild) {
-      try { app.setAsDefaultProtocolClient(APP_RETURN_SCHEME); } catch {}
-    }
+    // NSIS owns app-open registration in the selected installation scope.
+    // Electron's registration API writes HKCU even for all-user installs;
+    // calling it here would leave a separate handler after uninstallation.
     store = createStore({ userDataDir: app.getPath('userData') });
     const loaded = store.load();
     data = loaded.data;
