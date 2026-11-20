@@ -109,7 +109,7 @@ async function scenario(name, options, run) {
   for (const [code, expected] of [
     ['ACCOUNT_GOOGLE_CANCELLED', '구글 로그인을 취소했어요. 다시 시도하거나 로그인 없이 계속 사용할 수 있어요.'],
     ['ACCOUNT_GOOGLE_CONFIG', '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.'],
-    ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인 서버에 잠시 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+    ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인을 완료하지 못했어요. 잠시 뒤 다시 시도해 주세요. 계속 실패하면 운영자에게 알려 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
     ['ACCOUNT_GOOGLE_FAILED', '구글 로그인을 완료하지 못했어요. 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
   ]) await scenario(`Google callback ${code} is visible, ends waiting and permits a fresh attempt`, {}, async page => {
     const before = await page.evaluate(() => structuredClone(window.__persisted));
@@ -144,7 +144,7 @@ async function scenario(name, options, run) {
     const raw = 'SYNTHETIC_PROVIDER_DIAGNOSTIC https://example.invalid/?code=SYNTHETIC_PROVIDER_CODE <img src=x onerror=alert(1)>';
     for (const [code, expected] of [
       ['ACCOUNT_GOOGLE_CONFIG', '구글 로그인 설정을 확인해야 해요. 이 PC의 자료는 계속 사용할 수 있어요.'],
-      ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인 서버에 잠시 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
+      ['ACCOUNT_GOOGLE_TEMPORARY', '구글 로그인을 완료하지 못했어요. 잠시 뒤 다시 시도해 주세요. 계속 실패하면 운영자에게 알려 주세요. 이 PC의 자료는 계속 사용할 수 있어요.'],
     ]) {
       await page.evaluate(({ state, raw, code }) => window.__emitAccount({ ...state, auth: { ...state.auth, pending: false, error: { code, message: raw } } }), { state: guest, raw, code });
       await page.locator('#account-message').waitFor({ state: 'visible' });

@@ -287,9 +287,14 @@ async function blockedSuccess(f, context, hide = true) {
     ['unrecognized_error', /완료하지 못/, 'FAILED'],
   ]) await scenario(`Failed callback ${category} (${error}) remains visible without running close or focus`, { blockClose: true }, async ({ f, context }) => {
     const page = await context.newPage();
-    const response = await page.goto(f.callback({ error, error_description: PRIVATE_DETAIL }).href);
+    const description = error === 'server_error' ? 'Database error saving new user ' + PRIVATE_DETAIL : PRIVATE_DETAIL;
+    const response = await page.goto(f.callback({ error, error_description: description }).href);
     assert.equal(response.status(), 400); assert.match(response.headers()['content-type'], /^text\/plain/);
     assert.match(await page.locator('body').innerText(), expected);
+    if (category === 'TEMPORARY') {
+      assert.match(await page.locator('body').innerText(), /계속 실패하면 운영자에게 알려 주세요/);
+      assert.doesNotMatch(await page.locator('body').innerText(), /Database error|서버에 잠시 문제가/);
+    }
     assert(!(await page.content()).includes(PRIVATE_DETAIL));
     assert.equal(await page.evaluate(() => window.__closeAttempts), 0);
     assert.equal(f.service.getState().error, 'ACCOUNT_GOOGLE_' + category);

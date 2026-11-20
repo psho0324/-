@@ -20,7 +20,6 @@ function validateRunContext({ platform, arch, env, sourceRoot }) {
   if (!equal(path.win32.resolve(env.PLANNER_EXECUTABLE), executable)) throw failed('OWNED_CI_REQUIRED');
   return {
     installDir, executable,
-    uninstaller: path.win32.join(installDir, 'Uninstall MyPlanner.exe'),
     installer: path.win32.resolve(sourceRoot, 'dist', 'MyPlanner-Setup.exe'),
     sentinelCommand: `"${path.win32.join(installDir, 'ProtocolLifecycleSentinel.exe')}" -- "%1"`,
   };
@@ -113,6 +112,17 @@ function regularOwnedFile(file, root) {
   if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()
       || !equal(fs.realpathSync(root), path.resolve(root)) || !equal(fs.realpathSync(file), path.resolve(file))) throw failed('OWNED_FILE_REQUIRED');
 }
+function findOwnedUninstaller(root) {
+  // NSIS derives this name from build metadata. Discover it only inside the
+  // verified CI installation instead of guessing from the displayed app name.
+  if (!fs.lstatSync(root).isDirectory() || fs.lstatSync(root).isSymbolicLink()
+      || !equal(fs.realpathSync(root), path.resolve(root))) throw failed('OWNED_FILE_REQUIRED');
+  const candidates = fs.readdirSync(root).filter(name => /^Uninstall [^\\/:*?"<>|\r\n]+\.exe$/i.test(name));
+  if (candidates.length !== 1) throw failed('UNINSTALLER_NOT_UNIQUE');
+  const executable = path.join(root, candidates[0]);
+  regularOwnedFile(executable, root);
+  return executable;
+}
 function runExecutable(file, args) {
   const result = spawnSync(file, args, { windowsHide: true, encoding: 'utf8', timeout: 90000, maxBuffer: 65536 });
   if (result.error || result.status !== 0) throw failed('INSTALLER_PROCESS_FAILED');
@@ -198,7 +208,7 @@ async function main() {
     const root = path.resolve(__dirname, '..');
     const files = validateRunContext({ platform: process.platform, arch: process.arch, env: process.env, sourceRoot: root });
     regularOwnedFile(files.executable, files.installDir);
-    regularOwnedFile(files.uninstaller, files.installDir);
+    findOwnedUninstaller(files.installDir);
     regularOwnedFile(files.installer, path.join(root, 'dist'));
     const pkg = require('../package.json');
     if (pkg.build?.nsis?.deleteAppDataOnUninstall !== false) throw failed('DATA_PRESERVING_UNINSTALL_REQUIRED');
@@ -212,9 +222,9 @@ async function main() {
     report.checks.ownedUpdatedInstallation = true;
     const io = {
       inspect: () => registry('inspect'),
-      uninstall: () => { regularOwnedFile(files.uninstaller, files.installDir); if (!registry('inspect').noPlannerProcess) throw failed('APP_STILL_RUNNING'); runExecutable(files.uninstaller, ['/S']); },
+      uninstall: () => { const uninstaller = findOwnedUninstaller(files.installDir); if (!registry('inspect').noPlannerProcess) throw failed('APP_STILL_RUNNING'); regularOwnedFile(uninstaller, files.installDir); runExecutable(uninstaller, ['/S']); },
       waitRemoved: () => waitForRemoval(files.executable),
-      reinstall: () => { if (!removedRegistration(registry('inspect'))) throw failed('REINSTALL_OWNERSHIP_CHANGED'); regularOwnedFile(files.installer, path.join(root, 'dist')); runExecutable(files.installer, ['/S', '/D=' + files.installDir]); regularOwnedFile(files.executable, files.installDir); regularOwnedFile(files.uninstaller, files.installDir); },
+      reinstall: () => { if (!removedRegistration(registry('inspect'))) throw failed('REINSTALL_OWNERSHIP_CHANGED'); regularOwnedFile(files.installer, path.join(root, 'dist')); runExecutable(files.installer, ['/S', '/D=' + files.installDir]); regularOwnedFile(files.executable, files.installDir); findOwnedUninstaller(files.installDir); },
       sentinel: values => registry('sentinel', values), cleanup: values => registry('cleanup', values),
     };
     await verifyLifecycle(io, files, report, crypto.randomBytes(24).toString('hex'));
@@ -231,5 +241,5 @@ async function main() {
   console.log(`::${report.protocolLifecycleVerified ? 'notice' : 'error'} title=NSIS protocol lifecycle::` + JSON.stringify(report));
 }
 
-module.exports = { validateRunContext, updateWasVerified, ownedRegistration, ownSentinel, removedRegistration, verifyLifecycle, UPDATE_PROOF };
+module.exports = { validateRunContext, findOwnedUninstaller, updateWasVerified, ownedRegistration, ownSentinel, removedRegistration, verifyLifecycle, UPDATE_PROOF };
 if (require.main === module) main();

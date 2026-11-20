@@ -281,6 +281,7 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       [{error:'invalid_client',error_description:raw},'CONFIG','설정'],
       [{error:'server_error',error_code:'unexpected_failure',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
       [{error:'server_error',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
+      [{error:'server_error',error_description:'Database error saving new user '+raw},'TEMPORARY','계속 실패하면 운영자'],
       [{error_code:'unexpected_failure',error_description:raw},'TEMPORARY','잠시 뒤 다시'],
       [{error_code:'invalid_client',error_description:raw},'CONFIG','설정'],
       [{error:'unrecognized_error',error_description:'oauth2: "invalid_client" '+raw},'CONFIG','설정'],
@@ -297,7 +298,10 @@ async function test(name,run){try{await run();passed++;console.log('PASS',name)}
       const url=failureCallback(f,{...params,code:'SYNTHETIC_UNUSED_CODE',access_token:'SYNTHETIC_UNUSED_TOKEN'});
       const response=await localRequest(url);
       assert.equal(response.status,400);assert.match(response.body,new RegExp(text));
-      if(category==='TEMPORARY')assert.doesNotMatch(response.body,/설정/);
+      if(category==='TEMPORARY'){
+        assert.doesNotMatch(response.body,/설정|Database error|서버에 잠시 문제가/);
+        assert.match(response.body,/계속 실패하면 운영자에게 알려 주세요/);
+      }
       assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['referrer-policy'],'no-referrer');
       assert.equal(f.service.getState().error,'ACCOUNT_GOOGLE_'+category);
       assert.equal(f.service.getState().pending,false);assert.equal(f.service.getState().authenticated,false);

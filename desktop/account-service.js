@@ -45,7 +45,7 @@ function googleCallbackFailure(params) {
   const browser = {
     CANCELLED: 'Google 로그인을 취소했습니다. 앱으로 돌아가 다시 시도해 주세요.',
     CONFIG: 'Google 로그인 설정을 확인해야 합니다. 앱으로 돌아가 주세요.',
-    TEMPORARY: 'Google 로그인 서버에 잠시 문제가 생겼습니다. 앱으로 돌아가 잠시 뒤 다시 시도해 주세요.',
+    TEMPORARY: 'Google 로그인을 완료하지 못했습니다. 앱으로 돌아가 잠시 뒤 다시 시도해 주세요. 계속 실패하면 운영자에게 알려 주세요.',
     FAILED: 'Google 로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도해 주세요.',
   }[category];
   return { code: 'ACCOUNT_GOOGLE_' + category, browser };

@@ -1,8 +1,11 @@
 // Synthetic orchestration and destructive-operation guard tests only.
 // Real registry/installer execution belongs to the Windows CI lifecycle step.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
-  validateRunContext, updateWasVerified, ownedRegistration, ownSentinel,
+  validateRunContext, findOwnedUninstaller, updateWasVerified, ownedRegistration, ownSentinel,
   removedRegistration, verifyLifecycle, UPDATE_PROOF,
 } = require('../tools/check-protocol-lifecycle.cjs');
 
@@ -37,9 +40,40 @@ function fixture(options = {}) {
 (async () => {
   await test('Exact Windows CI fixture resolves only its owned executable and installers', () => {
     assert.equal(files.installDir, 'D:\\a\\_temp\\my-planner-installed');
-    assert.equal(files.uninstaller, 'D:\\a\\_temp\\my-planner-installed\\Uninstall MyPlanner.exe');
     assert.equal(files.installer, 'D:\\a\\repo\\desktop\\dist\\MyPlanner-Setup.exe');
     assert.equal(validateRunContext({ ...context, env: { ...context.env, PLANNER_EXECUTABLE: context.env.PLANNER_EXECUTABLE.toUpperCase() } }).executable, files.executable);
+  });
+  await test('Uninstaller discovery follows a renamed NSIS output and ignores unrelated executables', () => {
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'planner-uninstaller-discovery-'));
+    try {
+      const original = path.join(directory, 'Uninstall MyPlanner.exe');
+      const renamed = path.join(directory, 'Uninstall Renamed Project.exe');
+      fs.writeFileSync(original, 'SYNTHETIC'); fs.writeFileSync(path.join(directory, 'MyPlanner.exe'), 'SYNTHETIC');
+      fs.writeFileSync(path.join(directory, 'Other.exe'), 'SYNTHETIC');
+      assert.equal(findOwnedUninstaller(directory), original);
+      fs.renameSync(original, renamed);
+      assert.equal(findOwnedUninstaller(directory), renamed);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  await test('Missing, ambiguous and directory-shaped uninstallers fail closed before execution', () => {
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'planner-uninstaller-rejection-'));
+    try {
+      assert.throws(() => findOwnedUninstaller(directory), /UNINSTALLER_NOT_UNIQUE/);
+      const first = path.join(directory, 'Uninstall First.exe'), second = path.join(directory, 'Uninstall Second.exe');
+      fs.writeFileSync(first, 'SYNTHETIC'); fs.writeFileSync(second, 'SYNTHETIC');
+      assert.throws(() => findOwnedUninstaller(directory), /UNINSTALLER_NOT_UNIQUE/);
+      fs.unlinkSync(first); fs.unlinkSync(second); fs.mkdirSync(first);
+      assert.throws(() => findOwnedUninstaller(directory), /OWNED_FILE_REQUIRED/);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  await test('A linked installation directory cannot redirect uninstaller discovery', () => {
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'planner-uninstaller-links-'));
+    try {
+      const target = path.join(directory, 'target'), linked = path.join(directory, 'linked');
+      fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'Uninstall Planner.exe'), 'SYNTHETIC');
+      fs.symlinkSync(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+      assert.throws(() => findOwnedUninstaller(linked), /OWNED_FILE_REQUIRED/);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
   await test('Non-Windows, non-CI, wrong architecture and foreign or network paths cannot reach destructive operations', () => {
     for (const changed of [{ platform: 'linux' }, { arch: 'arm64' }, { sourceRoot: 'relative' }, { sourceRoot: '\\\\server\\share\\desktop' },
