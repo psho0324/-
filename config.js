@@ -12,7 +12,7 @@ window.WORKSPACE_CONFIG = {
       ready: true,
       downloadUrl: 'https://github.com/psho0324/-/releases/latest/download/MyPlanner-Setup.exe',
       downloadPlatform: 'windows',
-      downloadVersion: '0.1.4',
+      downloadVersion: '0.1.5',
       downloadRequirements: 'Windows 10/11 · 64비트',
       unsigned: true
     }
