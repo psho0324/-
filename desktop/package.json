@@ -1,6 +1,6 @@
 {
   "name": "my-planner",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "캘린더 + 일정/할 일 관리 데스크톱 앱",
   "main": "main.js",
   "scripts": {
